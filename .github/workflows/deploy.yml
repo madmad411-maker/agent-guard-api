@@ -18,20 +18,40 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
-      - name: Validate deployment secrets
+      - name: Resolve Cloudflare account ID
+        id: cloudflare-account
         run: |
-          test -n "$CLOUDFLARE_API_TOKEN"
-          test -n "$CLOUDFLARE_ACCOUNT_ID"
-          test -n "$COMPANIES_HOUSE_API_KEY"
+          set -euo pipefail
+          if [[ -n "$CLOUDFLARE_ACCOUNT_ID" ]]; then
+            echo "account_id=$CLOUDFLARE_ACCOUNT_ID" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          accounts_json="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts?per_page=100")"
+          account_count="$(jq '.result | length' <<< "$accounts_json")"
+          if [[ "$account_count" != "1" ]]; then
+            echo "Set CLOUDFLARE_ACCOUNT_ID or ensure the API token can access exactly one account." >&2
+            exit 1
+          fi
+          account_id="$(jq -er '.result[0].id | select(type == "string" and length > 0)' <<< "$accounts_json")"
+          echo "account_id=$account_id" >> "$GITHUB_OUTPUT"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Validate deployment secrets
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$COMPANIES_HOUSE_API_KEY"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           COMPANIES_HOUSE_API_KEY: ${{ secrets.COMPANIES_HOUSE_API_KEY }}
       - name: Deploy Worker
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          accountId: ${{ steps.cloudflare-account.outputs.account_id }}
           command: deploy
           secrets: COMPANIES_HOUSE_API_KEY
         env:
