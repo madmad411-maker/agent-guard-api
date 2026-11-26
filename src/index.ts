@@ -15,6 +15,7 @@ type Bindings = {
   NETWORK: string;
   KYB_CACHE?: KVNamespace;
   API_KEYS?: KVNamespace;
+  ADMIN_SECRET?: string;
 };
 
 type SanitizeResult = {
@@ -152,11 +153,18 @@ app.get("/", (c) => {
     .card p{margin:0;color:var(--muted);font-size:.93rem}
     .price{display:block;color:var(--green);font-size:1.25rem;font-weight:750;margin-top:12px}
     .rail{color:var(--muted);margin:15px 0 0}
+    .plans{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+    .plan{padding:21px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(145deg,#141e30,#0e1522)}
+    .plan h3{margin:0;font-size:1.08rem}
+    .plan-price{font-size:1.8rem;font-weight:800;letter-spacing:-.04em;margin:9px 0 0}
+    .plan p{color:var(--muted);margin:4px 0}
+    .plan .button{margin-top:14px}
+    .plan.featured{border-color:#57e3ad77}
     .codegrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
     pre{overflow:auto;margin:10px 0 0;padding:16px;border:1px solid var(--line);border-radius:12px;background:#070b13;color:#dbe8ff;font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}
     .links{display:flex;gap:18px;flex-wrap:wrap}
     footer{padding:25px 0 38px;border-top:1px solid #ffffff12;color:var(--muted);font-size:.9rem}
-    @media(max-width:680px){header{padding:17px 0}.navlinks{gap:12px;font-size:.84rem}main{padding-top:48px}.grid,.codegrid{grid-template-columns:1fr}.wrap{width:min(100% - 28px,1080px)}section{margin-top:42px}}
+    @media(max-width:680px){header{padding:17px 0}.navlinks{gap:12px;font-size:.84rem}main{padding-top:48px}.grid,.plans,.codegrid{grid-template-columns:1fr}.wrap{width:min(100% - 28px,1080px)}section{margin-top:42px}}
   </style>
 </head>
 <body>
@@ -182,6 +190,15 @@ app.get("/", (c) => {
         <article class="card"><h3>Deep UK KYB</h3><p>Profile, directors, PSCs, and risk assessment.</p><span class="price">${prices.deepKyb.decimal} USDC</span></article>
       </div>
       <p class="rail">All x402 payments use USDC on Base (<code>eip155:8453</code>). Valid Bearer API keys in the API_KEYS KV namespace bypass payment.</p>
+    </section>
+
+    <section id="plans" aria-labelledby="plans-title">
+      <h2 id="plans-title">Enterprise &amp; Prepaid API Keys</h2>
+      <div class="plans">
+        <article class="plan"><h3>Starter</h3><div class="plan-price">£29<span class="rail">/mo</span></div><p>5,000 requests per month</p><a class="button" href="mailto:keys@kybguard.uk?subject=KYBGuard%20API%20Key%20Request">Request / Buy API Key</a></article>
+        <article class="plan featured"><h3>Pro</h3><div class="plan-price">£99<span class="rail">/mo</span></div><p>25,000 requests per month</p><a class="button primary" href="mailto:keys@kybguard.uk?subject=KYBGuard%20API%20Key%20Request">Request / Buy API Key</a></article>
+        <article class="plan"><h3>Pay-As-You-Go</h3><div class="plan-price">x402</div><p>USDC micropayments on Base, billed per call</p><a class="button" href="#pricing">View per-call pricing</a></article>
+      </div>
     </section>
 
     <section id="quickstart" aria-labelledby="quickstart-title">
@@ -238,6 +255,63 @@ function escapeHtml(value: string): string {
     return entities[character] ?? character;
   });
 }
+
+app.post("/admin/issue-key", async (c) => {
+  const secret = c.env.ADMIN_SECRET;
+  const suppliedSecret = c.req.header("Authorization")?.match(
+    /^Bearer\s+(\S+)$/i,
+  )?.[1];
+  if (!secret || !suppliedSecret || suppliedSecret !== secret) {
+    return c.json(
+      { error: "Unauthorized" },
+      401,
+      { "WWW-Authenticate": "Bearer" },
+    );
+  }
+  if (!c.env.API_KEYS) {
+    return c.json({ error: "API key storage is not configured" }, 503);
+  }
+
+  const input = await readJson(c);
+  if (
+    !input ||
+    typeof input.customer_email !== "string" ||
+    input.customer_email.length > 254 ||
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.customer_email) ||
+    typeof input.plan !== "string" ||
+    !["starter", "pro", "enterprise"].includes(input.plan.toLowerCase())
+  ) {
+    return c.json(
+      {
+        error:
+          "Expected customer_email (valid email) and plan (starter, pro, or enterprise)",
+      },
+      400,
+    );
+  }
+
+  const keyBytes = crypto.getRandomValues(new Uint8Array(32));
+  const apiKey = `kyb_live_${Array.from(keyBytes, (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("")}`;
+  const metadata = {
+    customer_email: input.customer_email,
+    plan: input.plan.toLowerCase(),
+    created_at: new Date().toISOString(),
+  };
+  try {
+    await c.env.API_KEYS.put(apiKey, JSON.stringify(metadata));
+  } catch (error) {
+    console.error("API key issuance failed while saving key metadata", error);
+    return c.json({ error: "Could not save the API key" }, 503);
+  }
+
+  return c.json(
+    { api_key: apiKey, ...metadata },
+    201,
+    { "Cache-Control": "no-store" },
+  );
+});
 
 app.get("/llms.txt", (c) =>
   c.text(

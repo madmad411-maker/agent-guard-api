@@ -25,11 +25,68 @@ assert.match(landingHtml, /AgentGuard UK &amp; Sanitizer API/);
 assert.match(landingHtml, /Live status: Operational/);
 assert.match(landingHtml, /\$0\.005 USDC/);
 assert.match(landingHtml, /\$0\.15 USDC/);
+assert.match(landingHtml, /Enterprise &amp; Prepaid API Keys/);
+assert.match(landingHtml, /£29/);
+assert.match(landingHtml, /5,000 requests per month/);
+assert.match(landingHtml, /£99/);
+assert.match(landingHtml, /25,000 requests per month/);
+assert.match(
+  landingHtml,
+  /mailto:keys@kybguard\.uk\?subject=KYBGuard%20API%20Key%20Request/,
+);
 assert.match(landingHtml, /\/llms\.txt/);
 assert.match(landingHtml, /\/openapi\.json/);
 assert.match(landingHtml, /\/\.well-known\/mcp\.json/);
 assert.match(landingHtml, /curl -i/);
 assert.match(landingHtml, /mcp-server\.mjs/);
+
+const missingAdminAuth = await fetch(`${baseUrl}/admin/issue-key`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ customer_email: "buyer@example.com", plan: "starter" }),
+});
+assert.equal(missingAdminAuth.status, 401, "key issuance must reject missing admin auth");
+
+const unauthorizedIssue = await fetch(`${baseUrl}/admin/issue-key`, {
+  method: "POST",
+  headers: {
+    Authorization: "Bearer invalid-admin-test-secret",
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({ customer_email: "buyer@example.com", plan: "starter" }),
+});
+assert.equal(unauthorizedIssue.status, 401, "key issuance must reject invalid admin secrets");
+
+if (process.env.TEST_ADMIN_SECRET) {
+  const issuedResponse = await fetch(`${baseUrl}/admin/issue-key`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.TEST_ADMIN_SECRET}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      customer_email: "buyer@example.com",
+      plan: "starter",
+    }),
+  });
+  assert.equal(issuedResponse.status, 201, "valid admin secret should issue an API key");
+  assert.match(issuedResponse.headers.get("cache-control") ?? "", /no-store/i);
+  const issued = await issuedResponse.json();
+  assert.match(issued.api_key, /^kyb_live_[a-f0-9]{64}$/);
+  assert.equal(issued.customer_email, "buyer@example.com");
+  assert.equal(issued.plan, "starter");
+  assert.ok(Number.isFinite(Date.parse(issued.created_at)));
+
+  const issuedKeyCall = await fetch(`${baseUrl}/v1/sanitize`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${issued.api_key}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ text: "issued key test", strip_pii: false }),
+  });
+  assert.equal(issuedKeyCall.status, 200, "newly issued key should bypass x402");
+}
 
 const discovery = await fetch(`${baseUrl}/llms.txt`);
 assert.equal(discovery.status, 200, "GET /llms.txt should return 200");
