@@ -1,0 +1,35 @@
+{
+  "name": "agent-guard-api",
+  "version": "1.0.0",
+  "description": "",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "typecheck": "tsc --noEmit",
+    "test": "node test.mjs",
+    "deploy": "wrangler deploy"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/madmad411-maker/agent-guard-api.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/madmad411-maker/agent-guard-api/issues"
+  },
+  "homepage": "https://github.com/madmad411-maker/agent-guard-api#readme",
+  "dependencies": {
+    "@x402/core": "^2.32.0",
+    "@x402/evm": "^2.32.0",
+    "@x402/hono": "^2.32.0",
+    "hono": "^4.13.22"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261125.1",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.168.0"
+  }
+}

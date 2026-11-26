@@ -1,0 +1,10 @@
+name = "agent-guard-api"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+WALLET_ADDRESS = "[PASTE_YOUR_BASE_USDC_ADDRESS_HERE]"
+COMPANIES_HOUSE_API_KEY = "[PASTE_YOUR_UK_COMPANIES_HOUSE_KEY_HERE]"
+FACILITATOR_URL = "https://x402.org/facilitator"
+NETWORK = "base"
