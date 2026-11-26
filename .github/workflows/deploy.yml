@@ -47,6 +47,35 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           COMPANIES_HOUSE_API_KEY: ${{ secrets.COMPANIES_HOUSE_API_KEY }}
+      - name: Ensure workers.dev subdomain
+        run: |
+          set -euo pipefail
+          endpoint="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain"
+          response="$(curl --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "$endpoint")"
+          existing_subdomain="$(jq -er '.result.subdomain | select(type == "string" and length > 0)' <<< "$response" 2>/dev/null || true)"
+          if [[ -n "$existing_subdomain" ]]; then
+            echo "Using existing workers.dev subdomain."
+            exit 0
+          fi
+
+          error_code="$(jq -r '.errors[0].code // empty' <<< "$response")"
+          if [[ "$error_code" != "10007" ]]; then
+            echo "Could not confirm the account's workers.dev subdomain; refusing to change account settings." >&2
+            exit 1
+          fi
+
+          curl --fail --silent --show-error \
+            -X PUT \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data '{"subdomain":"agentguard-api"}' \
+            "$endpoint" >/dev/null
+          echo "Registered the authorized workers.dev subdomain."
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ steps.cloudflare-account.outputs.account_id }}
       - name: Deploy Worker
         uses: cloudflare/wrangler-action@v3
         with:
