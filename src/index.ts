@@ -100,19 +100,144 @@ function paymentRoutes(wallet: string): RoutesConfig {
   };
 }
 
-app.get("/", (c) =>
-  c.json({
-    service: "AgentGuard UK & Sanitizer API",
-    status: "operational",
-    protocol: "x402",
-    endpoints: [
-      "/v1/sanitize",
-      "/v1/verify-uk-company",
-      "/v1/full-audit",
-      "/v1/uk-deep-kyb",
-    ],
-  }),
-);
+app.get("/", (c) => {
+  if (!acceptsHtml(c.req.header("Accept"))) {
+    return c.json({
+      service: "AgentGuard UK & Sanitizer API",
+      status: "operational",
+      protocol: "x402",
+      endpoints: [
+        "/v1/sanitize",
+        "/v1/verify-uk-company",
+        "/v1/full-audit",
+        "/v1/uk-deep-kyb",
+      ],
+    });
+  }
+
+  const origin = escapeHtml(publicOrigin(c));
+  return c.html(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090d18">
+  <meta name="description" content="Real-time AI agent sanitization and UK company KYB verification, paid with x402 USDC on Base.">
+  <title>AgentGuard — AI Security & UK Company KYB</title>
+  <style>
+    :root{color-scheme:dark;--bg:#090d18;--panel:#111827;--line:#253148;--text:#edf3ff;--muted:#a9b7cb;--green:#57e3ad;--blue:#8eb8ff;--purple:#c3a6ff}
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(ellipse at 80% -20%,#19335a 0,transparent 42%),var(--bg);color:var(--text);font:16px/1.6 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}
+    .wrap{width:min(1080px,100% - 36px);margin:0 auto}
+    header{padding:22px 0;border-bottom:1px solid #ffffff12}
+    nav{display:flex;align-items:center;justify-content:space-between;gap:16px}
+    .brand{font-weight:750;letter-spacing:.02em;color:var(--text)}
+    .navlinks{display:flex;gap:20px;flex-wrap:wrap;font-size:.92rem}
+    main{padding:68px 0 56px}
+    .hero{max-width:760px}
+    .eyebrow{color:var(--green);font-size:.82rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase}
+    h1{font-size:clamp(2.4rem,7vw,4.7rem);line-height:1.04;letter-spacing:-.055em;margin:15px 0 20px}
+    .lead{max-width:660px;color:var(--muted);font-size:1.14rem}
+    .status{display:inline-flex;align-items:center;gap:9px;padding:7px 12px;border:1px solid #57e3ad55;border-radius:999px;background:#57e3ad12;color:var(--green);font-size:.9rem;font-weight:700}
+    .dot{width:8px;height:8px;background:currentColor;border-radius:50%;box-shadow:0 0 12px currentColor}
+    .actions{display:flex;gap:12px;flex-wrap:wrap;margin:28px 0 0}
+    .button{display:inline-block;padding:10px 15px;border-radius:10px;border:1px solid var(--line);background:#ffffff08;color:var(--text);font-weight:650}
+    .button.primary{background:var(--green);border-color:var(--green);color:#082017}
+    section{margin-top:54px}
+    h2{font-size:1.45rem;letter-spacing:-.02em;margin:0 0 16px}
+    .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+    .card{padding:19px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(145deg,#141e30,#0e1522)}
+    .card h3{margin:0 0 5px;font-size:1.02rem}
+    .card p{margin:0;color:var(--muted);font-size:.93rem}
+    .price{display:block;color:var(--green);font-size:1.25rem;font-weight:750;margin-top:12px}
+    .rail{color:var(--muted);margin:15px 0 0}
+    .codegrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+    pre{overflow:auto;margin:10px 0 0;padding:16px;border:1px solid var(--line);border-radius:12px;background:#070b13;color:#dbe8ff;font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}
+    .links{display:flex;gap:18px;flex-wrap:wrap}
+    footer{padding:25px 0 38px;border-top:1px solid #ffffff12;color:var(--muted);font-size:.9rem}
+    @media(max-width:680px){header{padding:17px 0}.navlinks{gap:12px;font-size:.84rem}main{padding-top:48px}.grid,.codegrid{grid-template-columns:1fr}.wrap{width:min(100% - 28px,1080px)}section{margin-top:42px}}
+  </style>
+</head>
+<body>
+  <header><nav class="wrap" aria-label="Main navigation">
+    <a class="brand" href="${origin}/">AGENTGUARD</a>
+    <div class="navlinks"><a href="#pricing">Pricing</a><a href="#quickstart">Quick start</a><a href="${origin}/openapi.json">API docs</a></div>
+  </nav></header>
+  <main class="wrap">
+    <div class="hero">
+      <span class="status"><span class="dot" aria-hidden="true"></span> Live status: Operational</span>
+      <p class="eyebrow">AI security · UK company KYB</p>
+      <h1>Trust the input.<br>Verify the business.</h1>
+      <p class="lead">Sanitize agent-bound text, redact sensitive data, and verify UK companies with live Companies House records. Pay per request with x402 USDC on Base, or use a Bearer API key.</p>
+      <div class="actions"><a class="button primary" href="#quickstart">Get started</a><a class="button" href="${origin}/llms.txt">Read agent docs</a></div>
+    </div>
+
+    <section id="pricing" aria-labelledby="pricing-title">
+      <h2 id="pricing-title">Simple pay-per-call pricing</h2>
+      <div class="grid">
+        <article class="card"><h3>Text sanitization</h3><p>Prompt-injection cleanup and optional PII redaction.</p><span class="price">${prices.sanitize.decimal} USDC</span></article>
+        <article class="card"><h3>UK company verification</h3><p>Company status, incorporation date, and insolvency check.</p><span class="price">${prices.verify.decimal} USDC</span></article>
+        <article class="card"><h3>Full audit</h3><p>Run sanitization and company verification together.</p><span class="price">${prices.audit.decimal} USDC</span></article>
+        <article class="card"><h3>Deep UK KYB</h3><p>Profile, directors, PSCs, and risk assessment.</p><span class="price">${prices.deepKyb.decimal} USDC</span></article>
+      </div>
+      <p class="rail">All x402 payments use USDC on Base (<code>eip155:8453</code>). Valid Bearer API keys in the API_KEYS KV namespace bypass payment.</p>
+    </section>
+
+    <section id="quickstart" aria-labelledby="quickstart-title">
+      <h2 id="quickstart-title">Quick start</h2>
+      <div class="codegrid">
+        <div><h3>Try the API with curl</h3><p class="rail">An unpaid request returns HTTP 402 with x402 payment requirements.</p>
+          <pre><code>curl -i ${origin}/v1/sanitize \\
+  -H 'Content-Type: application/json' \\
+  --data '{"text":"untrusted input","strip_pii":true}'</code></pre>
+        </div>
+        <div><h3>Connect an MCP client</h3><p class="rail">Add this stdio server to Claude, Cursor, or another MCP client.</p>
+          <pre><code>{
+  "command": "node",
+  "args": ["/path/to/agent-guard-api/mcp-server.mjs"],
+  "env": {
+    "AGENTGUARD_API_URL": "${origin}",
+    "AGENTGUARD_API_KEY": "&lt;your-api-key&gt;"
+  }
+}</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="docs-title">
+      <h2 id="docs-title">Explore the API</h2>
+      <div class="links"><a href="${origin}/llms.txt">llms.txt</a><a href="${origin}/openapi.json">OpenAPI 3.1</a><a href="${origin}/.well-known/mcp.json">MCP tool manifest</a></div>
+    </section>
+  </main>
+  <footer><div class="wrap">AgentGuard UK &amp; Sanitizer API · <a href="${origin}">kybguard.uk</a> · Base USDC x402</div></footer>
+</body>
+</html>`);
+});
+
+function acceptsHtml(accept: string | undefined): boolean {
+  return Boolean(
+    accept?.split(",").some((mediaRange) => {
+      const [mediaType, ...parameters] = mediaRange.split(";");
+      if (mediaType.trim().toLowerCase() !== "text/html") return false;
+      const quality = parameters.find((parameter) => /^\s*q=/i.test(parameter));
+      return Number(quality?.split("=")[1] ?? 1) > 0;
+    }),
+  );
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => {
+    const entities: Record<string, string> = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    };
+    return entities[character] ?? character;
+  });
+}
 
 app.get("/llms.txt", (c) =>
   c.text(

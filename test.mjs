@@ -5,6 +5,7 @@ const baseUrl = process.env.TEST_BASE_URL ?? "http://127.0.0.1:8787";
 
 const status = await fetch(`${baseUrl}/`);
 assert.equal(status.status, 200);
+assert.match(status.headers.get("content-type") ?? "", /application\/json/i);
 const statusBody = await status.json();
 assert.equal(statusBody.protocol, "x402");
 assert.deepEqual(statusBody.endpoints, [
@@ -14,12 +15,29 @@ assert.deepEqual(statusBody.endpoints, [
   "/v1/uk-deep-kyb",
 ]);
 
+const landing = await fetch(`${baseUrl}/`, {
+  headers: { Accept: "text/html,application/xhtml+xml" },
+});
+assert.equal(landing.status, 200);
+assert.match(landing.headers.get("content-type") ?? "", /text\/html/i);
+const landingHtml = await landing.text();
+assert.match(landingHtml, /AgentGuard UK &amp; Sanitizer API/);
+assert.match(landingHtml, /Live status: Operational/);
+assert.match(landingHtml, /\$0\.005 USDC/);
+assert.match(landingHtml, /\$0\.15 USDC/);
+assert.match(landingHtml, /\/llms\.txt/);
+assert.match(landingHtml, /\/openapi\.json/);
+assert.match(landingHtml, /\/\.well-known\/mcp\.json/);
+assert.match(landingHtml, /curl -i/);
+assert.match(landingHtml, /mcp-server\.mjs/);
+
 const discovery = await fetch(`${baseUrl}/llms.txt`);
 assert.equal(discovery.status, 200, "GET /llms.txt should return 200");
 assert.match(discovery.headers.get("content-type") ?? "", /text\/plain/i);
 const llms = await discovery.text();
 const manifestOrigin = llms.match(/^Base URL: (.+)$/m)?.[1];
 assert.ok(manifestOrigin, "llms.txt should include its request origin");
+assert.match(landingHtml, new RegExp(manifestOrigin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 assert.match(llms, /\$0\.005 USDC/);
 assert.match(llms, /\$0\.02 USDC/);
 assert.match(llms, /\$0\.022 USDC/);
