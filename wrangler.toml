@@ -5,6 +5,5 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 WALLET_ADDRESS = "0x74d0ff6d0912231fdd728fc5ddbeeed3bbfec92f"
-COMPANIES_HOUSE_API_KEY = "[PASTE_YOUR_UK_COMPANIES_HOUSE_KEY_HERE]"
 FACILITATOR_URL = "https://facilitator.payai.network"
 NETWORK = "base"
