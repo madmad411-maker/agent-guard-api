@@ -2,7 +2,9 @@
 
 Real-time AI-agent input sanitization and UK Companies House verification, served as a Cloudflare Worker.
 
-**Live API:** <https://agent-guard-api.agentguard-api.workers.dev>
+**Primary live API:** <https://api.kybguard.uk>
+
+The API is also available at <https://kybguard.uk>.
 
 **Network:** Base mainnet (`eip155:8453`)
 
@@ -21,10 +23,10 @@ Payment goes to `0x74d0ff6d0912231fdd728fc5ddbeeed3bbfec92f`. An unpaid request 
 
 ## Discovery
 
-- [`/`](https://agent-guard-api.agentguard-api.workers.dev/) — service status and endpoint list
-- [`/llms.txt`](https://agent-guard-api.agentguard-api.workers.dev/llms.txt) — agent-oriented usage documentation
-- [`/.well-known/mcp.json`](https://agent-guard-api.agentguard-api.workers.dev/.well-known/mcp.json) — tool manifest
-- [`/openapi.json`](https://agent-guard-api.agentguard-api.workers.dev/openapi.json) — OpenAPI 3.1 specification
+- [`/`](https://api.kybguard.uk/) — service status and endpoint list
+- [`/llms.txt`](https://api.kybguard.uk/llms.txt) — agent-oriented usage documentation
+- [`/.well-known/mcp.json`](https://api.kybguard.uk/.well-known/mcp.json) — tool manifest
+- [`/openapi.json`](https://api.kybguard.uk/openapi.json) — OpenAPI 3.1 specification
 
 ## Request examples
 
@@ -35,7 +37,7 @@ All paid endpoints accept JSON with `Content-Type: application/json`.
 First request the endpoint without payment to receive the current challenge:
 
 ```sh
-curl -i https://agent-guard-api.agentguard-api.workers.dev/v1/sanitize \
+curl -i https://api.kybguard.uk/v1/sanitize \
   -H 'Content-Type: application/json' \
   --data '{"text":"untrusted input","strip_pii":true}'
 ```
@@ -43,7 +45,7 @@ curl -i https://agent-guard-api.agentguard-api.workers.dev/v1/sanitize \
 The server responds with HTTP 402 and `PAYMENT-REQUIRED`. An x402-compatible client/wallet uses that challenge to construct and sign a payment payload. Send the resulting Base USDC payload in `PAYMENT-SIGNATURE` when retrying:
 
 ```sh
-curl -i https://agent-guard-api.agentguard-api.workers.dev/v1/sanitize \
+curl -i https://api.kybguard.uk/v1/sanitize \
   -H 'Content-Type: application/json' \
   -H 'PAYMENT-SIGNATURE: <base64-x402-payment-payload-from-your-client>' \
   --data '{"text":"untrusted input","strip_pii":true}'
@@ -58,7 +60,7 @@ Put a securely generated API key into the remote `API_KEYS` KV namespace as the 
 ```sh
 export AGENTGUARD_API_KEY='<your-api-key>'
 
-curl -i https://agent-guard-api.agentguard-api.workers.dev/v1/sanitize \
+curl -i https://api.kybguard.uk/v1/sanitize \
   -H "Authorization: Bearer ${AGENTGUARD_API_KEY}" \
   -H 'Content-Type: application/json' \
   --data '{"text":"untrusted input","strip_pii":true}'
@@ -68,19 +70,19 @@ Other request bodies:
 
 ```sh
 # Verify a UK company
-curl https://agent-guard-api.agentguard-api.workers.dev/v1/verify-uk-company \
+curl https://api.kybguard.uk/v1/verify-uk-company \
   -H "Authorization: Bearer ${AGENTGUARD_API_KEY}" \
   -H 'Content-Type: application/json' \
   --data '{"company_number":"00445790"}'
 
 # Full audit
-curl https://agent-guard-api.agentguard-api.workers.dev/v1/full-audit \
+curl https://api.kybguard.uk/v1/full-audit \
   -H "Authorization: Bearer ${AGENTGUARD_API_KEY}" \
   -H 'Content-Type: application/json' \
   --data '{"company_number":"00445790","payload_text":"untrusted input"}'
 
 # Deep KYB
-curl https://agent-guard-api.agentguard-api.workers.dev/v1/uk-deep-kyb \
+curl https://api.kybguard.uk/v1/uk-deep-kyb \
   -H "Authorization: Bearer ${AGENTGUARD_API_KEY}" \
   -H 'Content-Type: application/json' \
   --data '{"company_number":"00445790"}'
@@ -107,7 +109,7 @@ The standalone `mcp-server.mjs` exposes the four API operations as MCP tools ove
          "command": "node",
          "args": ["/absolute/path/to/agent-guard-api/mcp-server.mjs"],
          "env": {
-           "AGENTGUARD_API_URL": "https://agent-guard-api.agentguard-api.workers.dev",
+           "AGENTGUARD_API_URL": "https://api.kybguard.uk",
            "AGENTGUARD_API_KEY": "<your-api-key>"
          }
        }
@@ -115,7 +117,7 @@ The standalone `mcp-server.mjs` exposes the four API operations as MCP tools ove
    }
    ```
 
-   `AGENTGUARD_API_URL` is optional and defaults to the live URL above. `AGENTGUARD_API_KEY` is optional; without a valid API key, tool calls receive the x402 402 challenge. The bridge returns the HTTP status, payment challenge (if present), and response body to the MCP client; it does not sign x402 payments itself.
+   `AGENTGUARD_API_URL` is optional and defaults to `https://api.kybguard.uk`. `AGENTGUARD_API_KEY` is optional; without a valid API key, tool calls receive the x402 402 challenge. The bridge returns the HTTP status, payment challenge (if present), and response body to the MCP client; it does not sign x402 payments itself.
 
 3. Restart or reload the MCP client. The tools are `sanitize_text`, `verify_uk_company`, `full_audit`, and `uk_deep_kyb`.
 

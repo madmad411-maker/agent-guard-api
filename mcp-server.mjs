@@ -2,7 +2,7 @@ import readline from "node:readline";
 
 const apiBaseUrl = (
   process.env.AGENTGUARD_API_URL ??
-  "https://agent-guard-api.agentguard-api.workers.dev"
+  "https://api.kybguard.uk"
 ).replace(/\/+$/, "");
 const apiKey = process.env.AGENTGUARD_API_KEY;
 const tools = [

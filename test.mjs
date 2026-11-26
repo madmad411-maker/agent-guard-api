@@ -18,6 +18,8 @@ const discovery = await fetch(`${baseUrl}/llms.txt`);
 assert.equal(discovery.status, 200, "GET /llms.txt should return 200");
 assert.match(discovery.headers.get("content-type") ?? "", /text\/plain/i);
 const llms = await discovery.text();
+const manifestOrigin = llms.match(/^Base URL: (.+)$/m)?.[1];
+assert.ok(manifestOrigin, "llms.txt should include its request origin");
 assert.match(llms, /\$0\.005 USDC/);
 assert.match(llms, /\$0\.02 USDC/);
 assert.match(llms, /\$0\.022 USDC/);
@@ -28,6 +30,7 @@ const mcpResponse = await fetch(`${baseUrl}/.well-known/mcp.json`);
 assert.equal(mcpResponse.status, 200);
 const mcp = await mcpResponse.json();
 assert.equal(mcp.tools.length, 4);
+assert.equal(mcp.serverUrl, manifestOrigin);
 assert.ok(mcp.tools.every((tool) => tool._meta["x402:payment"].httpStatus === 402));
 assert.equal(
   mcp.tools.find((tool) => tool.name === "uk_deep_kyb")._meta["x402:payment"].atomicUnits,
@@ -39,6 +42,7 @@ const openapiResponse = await fetch(`${baseUrl}/openapi.json`);
 assert.equal(openapiResponse.status, 200);
 const openapi = await openapiResponse.json();
 assert.equal(openapi.openapi, "3.1.0");
+assert.equal(openapi.servers[0].url, manifestOrigin);
 assert.equal(openapi.paths["/v1/sanitize"].post["x-x402-payment"].network, "eip155:8453");
 assert.equal(openapi.paths["/v1/uk-deep-kyb"].post["x-x402-payment"].network, "eip155:8453");
 assert.equal(

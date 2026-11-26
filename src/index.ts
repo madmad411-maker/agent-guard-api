@@ -41,6 +41,7 @@ const COMPANY_API = "https://api.company-information.service.gov.uk/company/";
 const PLACEHOLDER = /^\[PASTE_.+_HERE\]$/;
 const MAX_TEXT_LENGTH = 50_000;
 const KYB_CACHE_TTL_SECONDS = 6 * 60 * 60;
+const DEFAULT_PUBLIC_ORIGIN = "https://api.kybguard.uk";
 
 const app = new Hono<{ Bindings: Bindings }>();
 const paymentMiddlewareCache = new Map<
@@ -117,6 +118,7 @@ app.get("/llms.txt", (c) =>
   c.text(
     `# AgentGuard UK & Sanitizer API
 
+Base URL: ${publicOrigin(c)}
 Machine-readable security sanitization and UK company compliance checks.
 Protocol: x402 HTTP 402 micropayments. Network: Base mainnet (eip155:8453).
 Payment token: USDC. Send JSON with Content-Type: application/json.
@@ -161,6 +163,7 @@ app.get("/.well-known/mcp.json", (c) =>
   c.json({
     mcpVersion: "2025-03-26",
     name: "agentguard-uk-sanitizer",
+    serverUrl: publicOrigin(c),
     description:
       "AgentGuard sanitization and UK company verification tools. Calls accept a valid Authorization: Bearer API key or x402 USDC payments on Base (eip155:8453).",
     tools: [
@@ -294,7 +297,7 @@ app.get("/openapi.json", (c) =>
       description:
         "AI agent text sanitization and UK company checks protected by x402 USDC payments on Base. A valid Authorization: Bearer API key bypasses x402.",
     },
-    servers: [{ url: "/" }],
+    servers: [{ url: publicOrigin(c) }],
     paths: {
       "/": {
         get: {
@@ -691,6 +694,15 @@ async function readJson(c: Context<{ Bindings: Bindings }>) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function publicOrigin(c: Context<{ Bindings: Bindings }>): string {
+  try {
+    const origin = new URL(c.req.url).origin;
+    return origin === "null" ? DEFAULT_PUBLIC_ORIGIN : origin;
+  } catch {
+    return DEFAULT_PUBLIC_ORIGIN;
+  }
 }
 
 function luhnValid(digits: string): boolean {
