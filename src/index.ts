@@ -13,6 +13,8 @@ type Bindings = {
   COMPANIES_HOUSE_API_KEY?: string;
   FACILITATOR_URL: string;
   NETWORK: string;
+  KYB_CACHE?: KVNamespace;
+  API_KEYS?: KVNamespace;
 };
 
 type SanitizeResult = {
@@ -28,10 +30,17 @@ type CompanyResult = {
   body: Record<string, unknown>;
 };
 
+type CompanyResource = {
+  status: number;
+  data: unknown;
+  cached: boolean;
+};
+
 const BASE_NETWORK: `${string}:${string}` = "eip155:8453";
 const COMPANY_API = "https://api.company-information.service.gov.uk/company/";
 const PLACEHOLDER = /^\[PASTE_.+_HERE\]$/;
 const MAX_TEXT_LENGTH = 50_000;
+const KYB_CACHE_TTL_SECONDS = 6 * 60 * 60;
 
 const app = new Hono<{ Bindings: Bindings }>();
 const paymentMiddlewareCache = new Map<
@@ -43,6 +52,7 @@ const prices = {
   sanitize: { amount: "5000", decimal: "$0.005" },
   verify: { amount: "20000", decimal: "$0.02" },
   audit: { amount: "22000", decimal: "$0.022" },
+  deepKyb: { amount: "150000", decimal: "$0.15" },
 } as const;
 
 function isConfigured(value: string | undefined): value is string {
@@ -82,6 +92,10 @@ function paymentRoutes(wallet: string): RoutesConfig {
       prices.audit.decimal,
       "Run text sanitization and UK company verification together",
     ),
+    "POST /v1/uk-deep-kyb": payment(
+      prices.deepKyb.decimal,
+      "Run a deep UK company KYB check across profile, officers, and PSC data",
+    ),
   };
 }
 
@@ -94,6 +108,7 @@ app.get("/", (c) =>
       "/v1/sanitize",
       "/v1/verify-uk-company",
       "/v1/full-audit",
+      "/v1/uk-deep-kyb",
     ],
   }),
 );
@@ -106,6 +121,7 @@ Machine-readable security sanitization and UK company compliance checks.
 Protocol: x402 HTTP 402 micropayments. Network: Base mainnet (eip155:8453).
 Payment token: USDC. Send JSON with Content-Type: application/json.
 An unpaid request returns HTTP 402 with x402 payment requirements; retry with a valid payment.
+Alternatively send Authorization: Bearer <token> for a token stored as a key in the API_KEYS KV namespace.
 
 ## POST /v1/sanitize — $0.005 USDC (5000 atomic units)
 Input JSON: {"text":"untrusted text","strip_pii":true}
@@ -126,6 +142,12 @@ Input JSON: {"company_number":"01234567","payload_text":"untrusted text"}
 Output JSON: {"audit_id":"64-character SHA-256 hex","company_verification":{...},"sanitization":{...}}
 Both checks run concurrently. The audit ID hashes the canonical results and audit timestamp.
 
+## POST /v1/uk-deep-kyb — $0.15 USDC (150000 atomic units)
+Input JSON: {"company_number":"01234567"}
+Output JSON: {"verified":true,"kyb_pass":true,"risk_score":0,"risk_flags":[],"company_name":"Example Ltd","status":"active","active_directors_count":2,"psc_count":1,"cached":false,"checked_at":"ISO-8601"}
+Checks the company profile, active officers, and persons with significant control in parallel.
+Successful Companies House responses are cached for six hours.
+
 ## Errors
 400 means invalid JSON/input. 402 means payment is required or could not be accepted.
 404 means a company number was not found. 502/503 indicate an upstream service or configuration error.
@@ -140,7 +162,7 @@ app.get("/.well-known/mcp.json", (c) =>
     mcpVersion: "2025-03-26",
     name: "agentguard-uk-sanitizer",
     description:
-      "Paid AgentGuard sanitization and UK company verification tools. Calls use x402 HTTP 402 payments in USDC on Base (eip155:8453).",
+      "AgentGuard sanitization and UK company verification tools. Calls accept a valid Authorization: Bearer API key or x402 USDC payments on Base (eip155:8453).",
     tools: [
       {
         name: "sanitize_text",
@@ -222,6 +244,34 @@ app.get("/.well-known/mcp.json", (c) =>
           },
         },
       },
+      {
+        name: "uk_deep_kyb",
+        description:
+          "Assess UK company status, active directors, PSC records, insolvency, and overdue accounts. Price: $0.15 USDC (150000 atomic units).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            company_number: {
+              type: "string",
+              pattern: "^[A-Za-z0-9]{1,8}$",
+            },
+          },
+          required: ["company_number"],
+          additionalProperties: false,
+        },
+        _meta: {
+          "x402:payment": {
+            scheme: "exact",
+            network: BASE_NETWORK,
+            asset: "USDC",
+            price: prices.deepKyb.decimal,
+            atomicUnits: prices.deepKyb.amount,
+            httpStatus: 402,
+            endpoint: "POST /v1/uk-deep-kyb",
+            bearerApiKeySupported: true,
+          },
+        },
+      },
     ],
     payment: {
       protocol: "x402",
@@ -230,6 +280,7 @@ app.get("/.well-known/mcp.json", (c) =>
       network: BASE_NETWORK,
       asset: "USDC",
       paymentRequiredHeader: "PAYMENT-REQUIRED",
+      bearerApiKey: "Authorization: Bearer <token> (API_KEYS KV)",
     },
   }),
 );
@@ -241,7 +292,7 @@ app.get("/openapi.json", (c) =>
       title: "AgentGuard UK & Sanitizer API",
       version: "1.0.0",
       description:
-        "AI agent text sanitization and UK company checks protected by x402 USDC payments on Base.",
+        "AI agent text sanitization and UK company checks protected by x402 USDC payments on Base. A valid Authorization: Bearer API key bypasses x402.",
     },
     servers: [{ url: "/" }],
     paths: {
@@ -402,13 +453,68 @@ app.get("/openapi.json", (c) =>
           ),
         },
       },
+      "/v1/uk-deep-kyb": {
+        post: {
+          summary: "Run deep UK company KYB checks",
+          description: "Price: $0.15 USDC (150000 atomic units), Base. Valid Bearer API keys bypass payment.",
+          ...paidOperation(
+            "ukDeepKyb",
+            {
+              type: "object",
+              properties: {
+                company_number: {
+                  type: "string",
+                  pattern: "^[A-Za-z0-9]{1,8}$",
+                },
+              },
+              required: ["company_number"],
+              additionalProperties: false,
+            },
+            {
+              type: "object",
+              properties: {
+                verified: { type: "boolean" },
+                kyb_pass: { type: "boolean" },
+                risk_score: { type: "integer", minimum: 0, maximum: 100 },
+                risk_flags: { type: "array", items: { type: "string" } },
+                company_name: { type: "string" },
+                status: { type: "string" },
+                active_directors_count: { type: "integer", minimum: 0 },
+                psc_count: { type: "integer", minimum: 0 },
+                cached: { type: "boolean" },
+                checked_at: { type: "string", format: "date-time" },
+              },
+              required: [
+                "verified",
+                "kyb_pass",
+                "risk_score",
+                "risk_flags",
+                "company_name",
+                "status",
+                "active_directors_count",
+                "psc_count",
+                "cached",
+                "checked_at",
+              ],
+            },
+          ),
+        },
+      },
     },
     components: {
+      securitySchemes: {
+        BearerAPIKey: {
+          type: "http",
+          scheme: "bearer",
+          description:
+            "Optional API key stored in the API_KEYS KV namespace. A valid key bypasses x402 payment.",
+        },
+      },
       schemas: {
         X402Payment: {
           type: "object",
           description:
-            "Unpaid requests return HTTP 402 and a PAYMENT-REQUIRED header containing x402 requirements for exact USDC on Base (eip155:8453).",
+            "Requests without a valid Bearer API key return HTTP 402 and a PAYMENT-REQUIRED header containing x402 requirements for exact USDC on Base (eip155:8453).",
         },
       },
     },
@@ -422,6 +528,7 @@ function paidOperation(
 ) {
   return {
     operationId,
+    security: [{}, { BearerAPIKey: [] }],
     "x-x402-payment": {
       required: true,
       scheme: "exact",
@@ -456,6 +563,16 @@ function paidOperation(
 }
 
 app.use("/v1/*", async (c, next) => {
+  const authorization = c.req.header("Authorization");
+  const bearer = authorization?.match(/^Bearer\s+(\S+)$/i)?.[1];
+  if (bearer && c.env.API_KEYS) {
+    try {
+      if ((await c.env.API_KEYS.get(bearer)) !== null) return next();
+    } catch (error) {
+      console.error("API key lookup failed; requiring x402 payment", error);
+    }
+  }
+
   const wallet = c.env.WALLET_ADDRESS;
   if (!validWallet(wallet)) {
     return c.json(
@@ -552,6 +669,15 @@ app.post("/v1/full-audit", async (c) => {
     sanitization,
     checked_at: checkedAt,
   });
+});
+
+app.post("/v1/uk-deep-kyb", async (c) => {
+  const input = await readJson(c);
+  if (!input || typeof input.company_number !== "string") {
+    return c.json({ error: "Expected JSON field: company_number (string)" }, 400);
+  }
+  const result = await verifyDeepKyb(input.company_number, c.env);
+  return c.json(result.body, result.status);
 });
 
 async function readJson(c: Context<{ Bindings: Bindings }>) {
@@ -704,35 +830,16 @@ async function verifyCompany(
       body: { error: "Invalid UK company number format", checked_at: checkedAt },
     };
   }
-  if (!isConfigured(env.COMPANIES_HOUSE_API_KEY)) {
+  const resource = await fetchCompanyResource(companyNumber, "", env);
+  if (resource.status === 503) {
     return {
       status: 503,
-      body: {
-        error: "Companies House API key is not configured",
-        checked_at: checkedAt,
-      },
+      body: isRecord(resource.data)
+        ? { ...resource.data, checked_at: checkedAt }
+        : { error: "Companies House API key is not configured", checked_at: checkedAt },
     };
   }
-
-  let response: Response;
-  try {
-    response = await fetch(
-      `${COMPANY_API}${encodeURIComponent(companyNumber.toUpperCase())}`,
-      {
-        headers: {
-          Authorization: `Basic ${btoa(`${env.COMPANIES_HOUSE_API_KEY}:`)}`,
-          Accept: "application/json",
-        },
-      },
-    );
-  } catch {
-    return {
-      status: 502,
-      body: { error: "Companies House API request failed", checked_at: checkedAt },
-    };
-  }
-
-  if (response.status === 404) {
+  if (resource.status === 404) {
     return {
       status: 404,
       body: {
@@ -744,33 +851,24 @@ async function verifyCompany(
       },
     };
   }
-  if (!response.ok) {
+  if (resource.status !== 200) {
     return {
-      status: response.status === 429 ? 503 : 502,
+      status: resource.status === 429 ? 503 : 502,
       body: {
         error: "Companies House API returned an unsuccessful response",
-        upstream_status: response.status,
+        upstream_status: resource.status,
         checked_at: checkedAt,
       },
     };
   }
-
-  let profile: unknown;
-  try {
-    profile = await response.json();
-  } catch {
-    return {
-      status: 502,
-      body: { error: "Companies House API returned invalid JSON", checked_at: checkedAt },
-    };
-  }
-  if (!isRecord(profile)) {
+  if (!isRecord(resource.data)) {
     return {
       status: 502,
       body: { error: "Companies House API returned an invalid profile", checked_at: checkedAt },
     };
   }
 
+  const profile = resource.data;
   const status =
     typeof profile.company_status === "string" ? profile.company_status : "unknown";
   const insolvencyHistory = profile.has_insolvency_history === true;
@@ -789,6 +887,231 @@ async function verifyCompany(
       checked_at: checkedAt,
     },
   };
+}
+
+async function verifyDeepKyb(
+  companyNumber: string,
+  env: Bindings,
+): Promise<CompanyResult> {
+  const checkedAt = new Date().toISOString();
+  const normalizedNumber = companyNumber.toUpperCase();
+  if (!/^[A-Za-z0-9]{1,8}$/.test(companyNumber)) {
+    return {
+      status: 400,
+      body: { error: "Invalid UK company number format", checked_at: checkedAt },
+    };
+  }
+
+  const [profileResult, officersResult, pscResult] = await Promise.all([
+    fetchCompanyResource(normalizedNumber, "", env),
+    fetchCompanyResource(normalizedNumber, "officers?items_per_page=100", env),
+    fetchCompanyResource(
+      normalizedNumber,
+      "persons-with-significant-control?items_per_page=100",
+      env,
+    ),
+  ]);
+  if (profileResult.status === 503) {
+    return {
+      status: 503,
+      body: { error: "Companies House API key is not configured", checked_at: checkedAt },
+    };
+  }
+  if (profileResult.status === 404) {
+    return {
+      status: 404,
+      body: {
+        verified: false,
+        kyb_pass: false,
+        error: "Company not found",
+        company_number: normalizedNumber,
+        checked_at: checkedAt,
+      },
+    };
+  }
+  const failedResult = [profileResult, officersResult, pscResult].find(
+    (result, index) =>
+      result.status !== 200 &&
+      !(index > 0 && result.status === 404),
+  );
+  if (failedResult) {
+    return {
+      status: failedResult.status === 429 ? 503 : 502,
+      body: {
+        error: "Companies House returned an unsuccessful deep KYB response",
+        upstream_status: failedResult.status,
+        checked_at: checkedAt,
+      },
+    };
+  }
+  if (!isRecord(profileResult.data)) {
+    return {
+      status: 502,
+      body: { error: "Companies House returned an invalid company profile", checked_at: checkedAt },
+    };
+  }
+
+  const profile = profileResult.data;
+  const officers = officersResult.status === 404 ? [] : resourceItems(officersResult.data);
+  const persons = pscResult.status === 404 ? [] : resourceItems(pscResult.data);
+  const activeDirectors = officers.filter(
+    (officer) =>
+      typeof officer.officer_role === "string" &&
+      /\bdirector\b/i.test(officer.officer_role) &&
+      !officer.resigned_on,
+  ).length;
+  const activePscs = persons.filter((person) => !person.ceased_on).length;
+  const companyStatus =
+    typeof profile.company_status === "string" ? profile.company_status : "unknown";
+  const riskFlags: string[] = [];
+  let riskScore = 0;
+  const addRisk = (flag: string, score: number) => {
+    riskFlags.push(flag);
+    riskScore += score;
+  };
+  if (companyStatus !== "active") addRisk("INACTIVE_STATUS", 35);
+  if (profile.has_insolvency_history === true) {
+    addRisk("INSOLVENCY_HISTORY", 40);
+  } else if (profile.has_insolvency_history !== false) {
+    addRisk("INSOLVENCY_STATUS_UNKNOWN", 20);
+  }
+  if (activeDirectors === 0) addRisk("NO_ACTIVE_DIRECTORS", 20);
+  if (activePscs === 0) addRisk("NO_PSC_DECLARED", 10);
+  const accounts = isRecord(profile.accounts) ? profile.accounts : {};
+  const nextAccountsDue =
+    typeof accounts.next_due === "string" ? Date.parse(accounts.next_due) : Number.NaN;
+  if (
+    accounts.overdue === true ||
+    (Number.isFinite(nextAccountsDue) && nextAccountsDue < Date.now())
+  ) {
+    addRisk("OVERDUE_ACCOUNTS", 15);
+  }
+  riskScore = Math.min(100, riskScore);
+
+  return {
+    status: 200,
+    body: {
+      verified: true,
+      kyb_pass:
+        companyStatus === "active" &&
+        profile.has_insolvency_history === false &&
+        activeDirectors > 0 &&
+        riskScore < 30,
+      risk_score: riskScore,
+      risk_flags: riskFlags,
+      company_name:
+        typeof profile.company_name === "string" ? profile.company_name : "",
+      status: companyStatus,
+      active_directors_count: activeDirectors,
+      psc_count: activePscs,
+      cached:
+        profileResult.cached && officersResult.cached && pscResult.cached,
+      checked_at: checkedAt,
+    },
+  };
+}
+
+function resourceItems(data: unknown): Record<string, unknown>[] {
+  if (!isRecord(data) || !Array.isArray(data.items)) return [];
+  return data.items.filter(isRecord);
+}
+
+async function fetchCompanyResource(
+  companyNumber: string,
+  resourcePath: string,
+  env: Bindings,
+): Promise<CompanyResource> {
+  if (!isConfigured(env.COMPANIES_HOUSE_API_KEY)) {
+    return {
+      status: 503,
+      data: { error: "Companies House API key is not configured" },
+      cached: false,
+    };
+  }
+
+  const normalizedNumber = companyNumber.toUpperCase();
+  const cacheKey = `companies-house:${normalizedNumber}:${resourcePath || "profile"}`;
+  if (env.KYB_CACHE) {
+    try {
+      const cachedData = await env.KYB_CACHE.get(cacheKey, "json");
+      if (isRecord(cachedData)) {
+        if (cachedData.__not_found === true) {
+          return { status: 404, data: cachedData, cached: true };
+        }
+        return { status: 200, data: cachedData, cached: true };
+      }
+    } catch (error) {
+      console.warn("Companies House cache read failed; fetching upstream", error);
+    }
+  }
+
+  let response: Response;
+  try {
+    const suffix = resourcePath ? `/${resourcePath}` : "";
+    response = await fetch(
+      `${COMPANY_API}${encodeURIComponent(normalizedNumber)}${suffix}`,
+      {
+        headers: {
+          Authorization: `Basic ${btoa(`${env.COMPANIES_HOUSE_API_KEY}:`)}`,
+          Accept: "application/json",
+        },
+      },
+    );
+  } catch (error) {
+    console.error("Companies House API request failed", error);
+    return {
+      status: 502,
+      data: { error: "Companies House API request failed" },
+      cached: false,
+    };
+  }
+
+  if (!response.ok) {
+    if (response.status === 404 && env.KYB_CACHE) {
+      try {
+        await env.KYB_CACHE.put(cacheKey, JSON.stringify({ __not_found: true }), {
+          expirationTtl: KYB_CACHE_TTL_SECONDS,
+        });
+      } catch (error) {
+        console.warn("Companies House not-found cache write failed", error);
+      }
+    }
+    return {
+      status: response.status,
+      data: { error: "Companies House API returned an unsuccessful response" },
+      cached: false,
+    };
+  }
+
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch (error) {
+    console.error("Companies House API returned invalid JSON", error);
+    return {
+      status: 502,
+      data: { error: "Companies House API returned invalid JSON" },
+      cached: false,
+    };
+  }
+  if (!isRecord(data)) {
+    return {
+      status: 502,
+      data: { error: "Companies House API returned an invalid response" },
+      cached: false,
+    };
+  }
+
+  if (env.KYB_CACHE) {
+    try {
+      await env.KYB_CACHE.put(cacheKey, JSON.stringify(data), {
+        expirationTtl: KYB_CACHE_TTL_SECONDS,
+      });
+    } catch (error) {
+      console.warn("Companies House cache write failed", error);
+    }
+  }
+  return { status: 200, data, cached: false };
 }
 
 export default {

@@ -7,3 +7,11 @@ compatibility_flags = ["nodejs_compat"]
 WALLET_ADDRESS = "0x74d0ff6d0912231fdd728fc5ddbeeed3bbfec92f"
 FACILITATOR_URL = "https://facilitator.payai.network"
 NETWORK = "base"
+
+[[kv_namespaces]]
+binding = "KYB_CACHE"
+id = "00000000000000000000000000000000"
+
+[[kv_namespaces]]
+binding = "API_KEYS"
+id = "00000000000000000000000000000000"

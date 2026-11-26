@@ -7,7 +7,8 @@
     "dev": "wrangler dev",
     "typecheck": "tsc --noEmit",
     "test": "node test.mjs",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "mcp": "node mcp-server.mjs"
   },
   "repository": {
     "type": "git",
