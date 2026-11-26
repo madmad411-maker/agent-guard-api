@@ -1,0 +1,26 @@
+# Smithery configuration: https://smithery.ai/docs/config#smitheryyaml
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      apiUrl:
+        type: string
+        title: AgentGuard API URL
+        description: Base URL for the AgentGuard API.
+        default: https://api.kybguard.uk
+      apiKey:
+        type: string
+        title: AgentGuard API key
+        description: Optional Bearer key. Omit to use x402 payment requirements.
+    required: []
+    additionalProperties: false
+  commandFunction: |-
+    (config) => ({
+      command: "node",
+      args: ["mcp-server.mjs"],
+      env: {
+        AGENTGUARD_API_URL: config.apiUrl || "https://api.kybguard.uk",
+        ...(config.apiKey ? { AGENTGUARD_API_KEY: config.apiKey } : {})
+      }
+    })
