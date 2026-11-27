@@ -126,3 +126,30 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ steps.cloudflare-account.outputs.account_id }}
           command: deploy
+      - name: Sync configured Worker secrets
+        run: |
+          set -euo pipefail
+
+          if [[ -n "$STRIPE_SECRET_KEY" ]]; then
+            printf '%s' "$STRIPE_SECRET_KEY" | npx wrangler secret put STRIPE_SECRET_KEY --name agent-guard-api
+          else
+            echo "Skipping STRIPE_SECRET_KEY because it is empty."
+          fi
+
+          if [[ -n "$STRIPE_WEBHOOK_SECRET" ]]; then
+            printf '%s' "$STRIPE_WEBHOOK_SECRET" | npx wrangler secret put STRIPE_WEBHOOK_SECRET --name agent-guard-api
+          else
+            echo "Skipping STRIPE_WEBHOOK_SECRET because it is empty."
+          fi
+
+          if [[ -n "$COMPANIES_HOUSE_API_KEY" ]]; then
+            printf '%s' "$COMPANIES_HOUSE_API_KEY" | npx wrangler secret put COMPANIES_HOUSE_API_KEY --name agent-guard-api
+          else
+            echo "Skipping COMPANIES_HOUSE_API_KEY because it is empty."
+          fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ steps.cloudflare-account.outputs.account_id }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          COMPANIES_HOUSE_API_KEY: ${{ secrets.COMPANIES_HOUSE_API_KEY }}
