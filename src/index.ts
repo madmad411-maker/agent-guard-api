@@ -88,9 +88,10 @@ const prices = {
   deepKyb: { amount: "150000", decimal: "$0.15" },
 } as const;
 
-const subscriptionPlans = {
-  starter: { amount: 2900, credits: 5000, label: "Starter" },
-  pro: { amount: 9900, credits: 25000, label: "Pro" },
+const checkoutPlans = {
+  starter: { amount: 2900, credits: 5000, label: "Starter", mode: "subscription" },
+  pro: { amount: 9900, credits: 25000, label: "Pro", mode: "subscription" },
+  payg: { amount: 1500, credits: 1000, label: "Pay-As-You-Go", mode: "payment" },
 } as const;
 
 function isConfigured(value: string | undefined): value is string {
@@ -282,20 +283,22 @@ function checkoutStatusPage(message: string): string {
 
 app.get("/checkout/:plan", async (c) => {
   const planName = c.req.param("plan");
-  if (planName !== "starter" && planName !== "pro") {
-    return c.json({ error: "Plan must be starter or pro" }, 400);
+  if (planName !== "starter" && planName !== "pro" && planName !== "payg") {
+    return c.json({ error: "Plan must be starter, pro, or payg" }, 400);
   }
 
   const stripeSecret = c.env.STRIPE_SECRET_KEY;
   if (!stripeSecret) return c.json({ error: "Stripe is not configured" }, 503);
-  const plan = subscriptionPlans[planName];
+  const plan = checkoutPlans[planName];
   const form = new URLSearchParams({
-    mode: "subscription",
+    mode: plan.mode,
+    "payment_method_types[0]": "card",
     "line_items[0][price_data][currency]": "gbp",
     "line_items[0][price_data][unit_amount]": String(plan.amount),
-    "line_items[0][price_data][recurring][interval]": "month",
     "line_items[0][price_data][product_data][name]":
-      `AgentGuard UK ${plan.label} (${plan.credits.toLocaleString("en-GB")} requests/mo)`,
+      plan.mode === "subscription"
+        ? `AgentGuard UK ${plan.label} (${plan.credits.toLocaleString("en-GB")} requests/mo)`
+        : `AgentGuard UK ${plan.label} (${plan.credits.toLocaleString("en-GB")} API credits)`,
     "line_items[0][quantity]": "1",
     "metadata[plan]": planName,
     "metadata[credits]": String(plan.credits),
@@ -303,6 +306,9 @@ app.get("/checkout/:plan", async (c) => {
       "https://kybguard.uk/checkout/success?session_id={CHECKOUT_SESSION_ID}",
     cancel_url: "https://kybguard.uk/",
   });
+  if (plan.mode === "subscription") {
+    form.set("line_items[0][price_data][recurring][interval]", "month");
+  }
 
   let stripeResponse: Response;
   try {
@@ -394,14 +400,15 @@ app.post("/webhooks/stripe", async (c) => {
       const planName = metadata.plan;
       const credits = metadata.credits;
       if (
-        (planName !== "starter" && planName !== "pro") ||
-        credits !== String(subscriptionPlans[planName].credits) ||
+        (planName !== "starter" && planName !== "pro" && planName !== "payg") ||
+        credits !== String(checkoutPlans[planName].credits) ||
+        stripeObject.mode !== checkoutPlans[planName].mode ||
         typeof stripeObject.id !== "string"
       ) {
         return c.json({ error: "Checkout session is missing valid plan metadata" }, 400);
       }
 
-      const plan = subscriptionPlans[planName];
+      const plan = checkoutPlans[planName];
       const customerDetails = isRecord(stripeObject.customer_details)
         ? stripeObject.customer_details
         : {};
@@ -411,7 +418,10 @@ app.post("/webhooks/stripe", async (c) => {
           : typeof stripeObject.customer_email === "string"
             ? stripeObject.customer_email
             : "";
-      const subId = subscriptionId(stripeObject.subscription);
+      const subId =
+        plan.mode === "subscription"
+          ? subscriptionId(stripeObject.subscription)
+          : null;
       const apiKey = await keyForStripeEvent(webhookSecret, event.id);
       await saveApiKey(
         c.env,
@@ -420,9 +430,11 @@ app.post("/webhooks/stripe", async (c) => {
           plan: planName,
           created_at: new Date().toISOString(),
           credits: plan.credits,
-          monthly_quota: plan.credits,
+          quota: plan.credits,
           requests_used: 0,
-          subscription_id: subId,
+          ...(plan.mode === "subscription"
+            ? { monthly_quota: plan.credits, subscription_id: subId }
+            : {}),
         },
         apiKey,
       );
@@ -450,8 +462,8 @@ app.post("/webhooks/stripe", async (c) => {
                 apiKey,
                 JSON.stringify({
                   ...currentMetadata,
-                  credits: subscriptionPlans[planName].credits,
-                  monthly_quota: subscriptionPlans[planName].credits,
+                  credits: checkoutPlans[planName].credits,
+                  monthly_quota: checkoutPlans[planName].credits,
                   requests_used: 0,
                   quota_reset_at: new Date().toISOString(),
                 }),
@@ -490,113 +502,179 @@ app.get("/", (c) => {
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#090d18">
-  <meta name="description" content="Real-time AI agent sanitization and UK company KYB verification, with a five-call daily free sandbox and x402 USDC on Base.">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0b0f19">
+  <meta name="description" content="Verify UK companies and sanitize AI inputs. Try the live sandbox with five free calls per IP each day.">
   <title>AgentGuard — AI Security & UK Company KYB</title>
   <style>
-    :root{color-scheme:dark;--bg:#090d18;--panel:#111827;--line:#253148;--text:#edf3ff;--muted:#a9b7cb;--green:#57e3ad;--blue:#8eb8ff;--purple:#c3a6ff}
+    :root{color-scheme:dark;--bg:#0b0f19;--surface:rgba(20,29,44,.78);--line:rgba(155,180,205,.18);--text:#edf4fb;--muted:#9aabbd;--emerald:#51e3ad;--cyan:#67d8f4}
     *{box-sizing:border-box}
-    body{margin:0;background:radial-gradient(ellipse at 80% -20%,#19335a 0,transparent 42%),var(--bg);color:var(--text);font:16px/1.6 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-    a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}
-    .wrap{width:min(1080px,100% - 36px);margin:0 auto}
-    header{padding:22px 0;border-bottom:1px solid #ffffff12}
-    nav{display:flex;align-items:center;justify-content:space-between;gap:16px}
-    .brand{font-weight:750;letter-spacing:.02em;color:var(--text)}
-    .navlinks{display:flex;gap:20px;flex-wrap:wrap;font-size:.92rem}
-    main{padding:68px 0 56px}
-    .hero{max-width:760px}
-    .eyebrow{color:var(--green);font-size:.82rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase}
-    h1{font-size:clamp(2.4rem,7vw,4.7rem);line-height:1.04;letter-spacing:-.055em;margin:15px 0 20px}
-    .lead{max-width:660px;color:var(--muted);font-size:1.14rem}
-    .status{display:inline-flex;align-items:center;gap:9px;padding:7px 12px;border:1px solid #57e3ad55;border-radius:999px;background:#57e3ad12;color:var(--green);font-size:.9rem;font-weight:700}
+    html,body{width:100%;max-width:100%;overflow-x:hidden}
+    body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 78% -15%,#15384a 0,transparent 38%),radial-gradient(ellipse at 8% 18%,#132843 0,transparent 32%),var(--bg);color:var(--text);font:16px/1.6 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}
+    .wrap{width:min(1120px,calc(100% - 40px));margin:0 auto}
+    header{padding:18px 0;border-bottom:1px solid var(--line);background:#0b0f19b8;backdrop-filter:blur(16px)}
+    nav{display:flex;align-items:center;justify-content:space-between;gap:20px}
+    .brand{font-weight:800;letter-spacing:.12em;color:var(--text)}
+    .navlinks,.doclinks{display:flex;gap:20px;flex-wrap:wrap;font-size:.92rem}
+    main{padding:54px 0 64px}
+    .hero{max-width:790px}
+    .eyebrow{color:var(--emerald);font-size:.78rem;font-weight:800;letter-spacing:.15em;text-transform:uppercase}
+    h1{font-size:clamp(2.5rem,8vw,5rem);line-height:1.02;letter-spacing:-.06em;margin:14px 0 18px}
+    h2{font-size:clamp(1.45rem,4vw,2rem);line-height:1.2;letter-spacing:-.03em;margin:0 0 10px}
+    h3{line-height:1.25}
+    .lead{max-width:700px;color:#c0cfdd;font-size:clamp(1rem,2.4vw,1.18rem)}
+    .status{display:inline-flex;align-items:center;gap:9px;padding:6px 12px;border:1px solid #51e3ad45;border-radius:999px;background:#51e3ad10;color:var(--emerald);font-size:.86rem;font-weight:750}
     .dot{width:8px;height:8px;background:currentColor;border-radius:50%;box-shadow:0 0 12px currentColor}
-    .actions{display:flex;gap:12px;flex-wrap:wrap;margin:28px 0 0}
-    .button{display:inline-block;padding:10px 15px;border-radius:10px;border:1px solid var(--line);background:#ffffff08;color:var(--text);font-weight:650}
-    .button.primary{background:var(--green);border-color:var(--green);color:#082017}
-    section{margin-top:54px}
-    h2{font-size:1.45rem;letter-spacing:-.02em;margin:0 0 16px}
-    .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
-    .card{padding:19px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(145deg,#141e30,#0e1522)}
-    .card h3{margin:0 0 5px;font-size:1.02rem}
-    .card p{margin:0;color:var(--muted);font-size:.93rem}
-    .price{display:block;color:var(--green);font-size:1.25rem;font-weight:750;margin-top:12px}
-    .rail{color:var(--muted);margin:15px 0 0}
-    .plans{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
-    .plan{padding:21px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(145deg,#141e30,#0e1522)}
-    .plan h3{margin:0;font-size:1.08rem}
-    .plan-price{font-size:1.8rem;font-weight:800;letter-spacing:-.04em;margin:9px 0 0}
-    .plan p{color:var(--muted);margin:4px 0}
-    .plan .button{margin-top:14px}
-    .plan.featured{border-color:#57e3ad77}
-    .codegrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
-    pre{overflow:auto;margin:10px 0 0;padding:16px;border:1px solid var(--line);border-radius:12px;background:#070b13;color:#dbe8ff;font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}
-    .links{display:flex;gap:18px;flex-wrap:wrap}
-    footer{padding:25px 0 38px;border-top:1px solid #ffffff12;color:var(--muted);font-size:.9rem}
-    @media(max-width:680px){header{padding:17px 0}.navlinks{gap:12px;font-size:.84rem}main{padding-top:48px}.grid,.plans,.codegrid{grid-template-columns:1fr}.wrap{width:min(100% - 28px,1080px)}section{margin-top:42px}}
+    .actions{display:flex;gap:12px;flex-wrap:wrap;margin:24px 0 0}
+    .button,button{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:10px 16px;border:1px solid var(--line);border-radius:11px;background:#ffffff08;color:var(--text);font:inherit;font-weight:700;text-align:center;cursor:pointer}
+    .button.primary,button.primary{background:var(--emerald);border-color:var(--emerald);color:#062018}
+    button:disabled{opacity:.65;cursor:wait}
+    section{margin-top:54px;min-width:0}
+    .section-note{color:var(--muted);margin:0 0 18px}
+    .glass{min-width:0;border:1px solid var(--line);border-radius:18px;background:linear-gradient(145deg,rgba(24,39,55,.86),rgba(14,21,34,.82));box-shadow:0 20px 55px #0003;backdrop-filter:blur(14px)}
+    .demo-layout{display:grid;grid-template-columns:minmax(0,.92fr) minmax(0,1.08fr);gap:16px}
+    .demo-form,.demo-result{min-width:0;padding:20px}
+    .demo-form-grid{display:grid;grid-template-columns:1fr;gap:14px}
+    label{display:block;margin-bottom:6px;color:#c8d6e2;font-size:.9rem;font-weight:650}
+    input,select,textarea{display:block;width:100%;max-width:100%;min-height:46px;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:#090e18;color:var(--text);font:inherit}
+    textarea{min-height:112px;resize:vertical}
+    input:focus,select:focus,textarea:focus,button:focus-visible,a:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+    .demo-form button{width:100%;margin-top:14px}
+    .demo-status{min-height:1.5em;margin:12px 0 0;color:var(--muted);font-size:.9rem}
+    .result-head{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:8px}
+    .result-head strong{color:var(--cyan)}
+    pre{display:block;width:100%;max-width:100%;overflow-x:auto;overscroll-behavior-x:contain;margin:10px 0 0;padding:16px;border:1px solid var(--line);border-radius:12px;background:#070b12;color:#d9e8f4;font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre}
+    pre code{display:block;width:max-content;min-width:100%;max-width:100%;overflow-x:auto;white-space:pre}
+    .pricing-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
+    .price-card{display:flex;min-width:0;flex-direction:column;align-items:flex-start;padding:18px}
+    .price-card h3{margin:5px 0;font-size:1.05rem}
+    .price-card p{flex:1;margin:4px 0 14px;color:var(--muted);font-size:.9rem}
+    .price{color:var(--emerald);font-size:1.45rem;font-weight:850;letter-spacing:-.04em}
+    .price-card .button{width:100%;margin-top:auto}
+    .price-card.featured{border-color:#51e3ad70;box-shadow:0 0 28px #51e3ad12}
+    .microcopy{color:var(--muted);font-size:.9rem}
+    .doclinks{gap:12px}
+    .doclinks a{padding:7px 10px;border:1px solid var(--line);border-radius:9px;background:#ffffff06}
+    footer{padding:24px 0 38px;border-top:1px solid var(--line);color:var(--muted);font-size:.9rem}
+    [hidden]{display:none!important}
+    @media(max-width:1000px){.pricing-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+    @media(max-width:767px){.wrap{width:calc(100% - 32px)}header{padding:14px 0}nav{align-items:flex-start;flex-direction:column;gap:10px}.navlinks{gap:12px}main{padding:38px 0 48px}.actions{align-items:stretch;flex-direction:column}.actions .button{width:100%}.demo-layout,.demo-form-grid,.pricing-grid{grid-template-columns:1fr}section{margin-top:40px}.demo-form,.demo-result{padding:16px}.price-card{padding:17px}.doclinks{flex-direction:column;align-items:stretch}.doclinks a{text-align:center}}
   </style>
 </head>
 <body>
   <header><nav class="wrap" aria-label="Main navigation">
     <a class="brand" href="${origin}/">AGENTGUARD</a>
-    <div class="navlinks"><a href="#pricing">Pricing</a><a href="#quickstart">Quick start</a><a href="${origin}/openapi.json">API docs</a></div>
+    <div class="navlinks"><a href="#live-demo">Live demo</a><a href="#pricing">Pricing</a><a href="#docs">Docs</a></div>
   </nav></header>
   <main class="wrap">
     <div class="hero">
       <span class="status"><span class="dot" aria-hidden="true"></span> Live status: Operational</span>
       <p class="eyebrow">AI security · UK company KYB</p>
       <h1>Trust the input.<br>Verify the business.</h1>
-      <p class="lead">Sanitize agent-bound text, redact sensitive data, and verify UK companies with live Companies House records. Try five free daily calls per IP, then pay per request with x402 USDC on Base or use a Bearer API key.</p>
-      <div class="actions"><a class="button primary" href="#quickstart">Get started</a><a class="button" href="${origin}/llms.txt">Read agent docs</a></div>
+      <p class="lead">Sanitize agent-bound text and check UK companies against live Companies House records. Start in the browser with five free calls per IP each day; no signup required.</p>
+      <div class="actions"><a class="button primary" href="#live-demo">Try the live sandbox</a><a class="button" href="#pricing">Explore pricing</a></div>
     </div>
 
+    <section id="live-demo" aria-labelledby="demo-title">
+      <p class="eyebrow">Interactive live sandbox</p>
+      <h2 id="demo-title">Make a real API call</h2>
+      <p class="section-note">Try company verification or PII-safe sanitization. The five-call daily allowance is shared across these endpoints for your IP.</p>
+      <div class="demo-layout">
+        <form class="glass demo-form" id="sandbox-form">
+          <div class="demo-form-grid">
+            <div><label for="demo-action">Choose an endpoint</label>
+              <select id="demo-action"><option value="verify">Verify a UK company</option><option value="sanitize">Sanitize text</option></select>
+            </div>
+            <div id="company-field"><label for="demo-company">Company number</label>
+              <input id="demo-company" value="00445790" autocomplete="off" inputmode="text">
+            </div>
+            <div id="sanitize-field" hidden><label for="demo-text">Text to sanitize</label>
+              <textarea id="demo-text">Contact test@example.com</textarea>
+            </div>
+          </div>
+          <button class="primary" id="demo-submit" type="submit">Run free request</button>
+          <p class="demo-status" id="demo-status" aria-live="polite">Five free requests per IP each day. No API key needed.</p>
+        </form>
+        <div class="glass demo-result">
+          <div class="result-head"><strong>Live response</strong><span class="microcopy">JSON</span></div>
+          <pre><code id="demo-output">Select an endpoint and run a request.</code></pre>
+        </div>
+      </div>
+    </section>
+
     <section id="pricing" aria-labelledby="pricing-title">
-      <h2 id="pricing-title">Simple pay-per-call pricing</h2>
-      <div class="grid">
-        <article class="card"><h3>Text sanitization</h3><p>Prompt-injection cleanup and optional PII redaction.</p><span class="price">${prices.sanitize.decimal} USDC</span></article>
-        <article class="card"><h3>UK company verification</h3><p>Company status, incorporation date, and insolvency check.</p><span class="price">${prices.verify.decimal} USDC</span></article>
-        <article class="card"><h3>Full audit</h3><p>Run sanitization and company verification together.</p><span class="price">${prices.audit.decimal} USDC</span></article>
-        <article class="card"><h3>Deep UK KYB</h3><p>Profile, directors, PSCs, and risk assessment.</p><span class="price">${prices.deepKyb.decimal} USDC</span></article>
-      </div>
-      <p class="rail">All x402 payments use USDC on Base (<code>eip155:8453</code>). Valid Bearer API keys in the API_KEYS KV namespace bypass payment.</p>
-    </section>
-
-    <section id="plans" aria-labelledby="plans-title">
-      <h2 id="plans-title">Enterprise &amp; Prepaid API Keys</h2>
-      <div class="plans">
-        <article class="plan"><h3>Starter</h3><div class="plan-price">£29<span class="rail">/mo</span></div><p>5,000 requests per month</p><a class="button" href="mailto:keys@kybguard.uk?subject=KYBGuard%20API%20Key%20Request">Request / Buy API Key</a></article>
-        <article class="plan featured"><h3>Pro</h3><div class="plan-price">£99<span class="rail">/mo</span></div><p>25,000 requests per month</p><a class="button primary" href="mailto:keys@kybguard.uk?subject=KYBGuard%20API%20Key%20Request">Request / Buy API Key</a></article>
-        <article class="plan"><h3>Pay-As-You-Go</h3><div class="plan-price">x402</div><p>USDC micropayments on Base, billed per call</p><a class="button" href="#pricing">View per-call pricing</a></article>
+      <p class="eyebrow">Flexible access</p>
+      <h2 id="pricing-title">Choose how you build</h2>
+      <div class="pricing-grid">
+        <article class="glass price-card"><span class="microcopy">No signup</span><h3>Free Sandbox</h3><div class="price">Free</div><p>5 calls per IP per day across sanitize and verification.</p><a class="button" href="#live-demo">Try it now</a></article>
+        <article class="glass price-card featured"><span class="microcopy">One-time pack</span><h3>Pay-As-You-Go</h3><div class="price">£15</div><p>1,000 API credits. Pay once, no monthly commitment.</p><a class="button primary" href="${origin}/checkout/payg">Get 1,000 credits</a></article>
+        <article class="glass price-card"><span class="microcopy">Monthly plan</span><h3>Starter</h3><div class="price">£29<span class="microcopy"> / mo</span></div><p>5,000 requests per month for growing projects.</p><a class="button" href="${origin}/checkout/starter">Choose Starter</a></article>
+        <article class="glass price-card"><span class="microcopy">Monthly plan</span><h3>Pro</h3><div class="price">£99<span class="microcopy"> / mo</span></div><p>25,000 requests per month for production teams.</p><a class="button" href="${origin}/checkout/pro">Choose Pro</a></article>
+        <article class="glass price-card"><span class="microcopy">Agent-native</span><h3>Autonomous x402</h3><div class="price">USDC</div><p>Per-call Base micropayments for autonomous agents.</p><a class="button" href="${origin}/llms.txt">Explore x402</a></article>
       </div>
     </section>
 
-    <section id="quickstart" aria-labelledby="quickstart-title">
-      <h2 id="quickstart-title">Quick start</h2>
-      <div class="codegrid">
-        <div><h3>Try the API with curl</h3><p class="rail">Sanitization and company verification include five free calls per IP each day; later unpaid calls return HTTP 402 with x402 payment requirements.</p>
-          <pre><code>curl -i ${origin}/v1/sanitize \\
-  -H 'Content-Type: application/json' \\
-  --data '{"text":"untrusted input","strip_pii":true}'</code></pre>
-        </div>
-        <div><h3>Connect an MCP client</h3><p class="rail">Add this stdio server to Claude, Cursor, or another MCP client.</p>
-          <pre><code>{
-  "command": "node",
-  "args": ["/path/to/agent-guard-api/mcp-server.mjs"],
-  "env": {
-    "AGENTGUARD_API_URL": "${origin}",
-    "AGENTGUARD_API_KEY": "&lt;your-api-key&gt;"
-  }
-}</code></pre>
-        </div>
-      </div>
-    </section>
-
-    <section aria-labelledby="docs-title">
-      <h2 id="docs-title">Explore the API</h2>
-      <div class="links"><a href="${origin}/llms.txt">llms.txt</a><a href="${origin}/openapi.json">OpenAPI 3.1</a><a href="${origin}/.well-known/mcp.json">MCP tool manifest</a></div>
+    <section id="docs" aria-labelledby="docs-title">
+      <p class="eyebrow">Developer resources</p>
+      <h2 id="docs-title">Built for developers and agents</h2>
+      <p class="section-note">USDC payments use Base mainnet (eip155:8453). Valid Bearer API keys are also supported.</p>
+      <div class="doclinks"><a href="${origin}/llms.txt">llms.txt</a><a href="${origin}/.well-known/mcp.json">MCP manifest</a><a href="${origin}/openapi.json">OpenAPI reference</a><a href="${origin}/sitemap.xml">XML sitemap</a></div>
     </section>
   </main>
-  <footer><div class="wrap">AgentGuard UK &amp; Sanitizer API · <a href="${origin}">kybguard.uk</a> · Base USDC x402</div></footer>
+  <footer><div class="wrap">AgentGuard UK · Secure input, verified business · Base USDC x402</div></footer>
+  <script>
+    const sandboxForm = document.getElementById("sandbox-form");
+    const demoAction = document.getElementById("demo-action");
+    const companyField = document.getElementById("company-field");
+    const sanitizeField = document.getElementById("sanitize-field");
+    const demoOutput = document.getElementById("demo-output");
+    const demoStatus = document.getElementById("demo-status");
+    const demoSubmit = document.getElementById("demo-submit");
+    const syncSandboxFields = () => {
+      const sanitizing = demoAction.value === "sanitize";
+      companyField.hidden = sanitizing;
+      sanitizeField.hidden = !sanitizing;
+    };
+    demoAction.addEventListener("change", syncSandboxFields);
+    sandboxForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const sanitizing = demoAction.value === "sanitize";
+      const endpoint = sanitizing ? "/v1/sanitize" : "/v1/verify-uk-company";
+      const payload = sanitizing
+        ? { text: document.getElementById("demo-text").value, strip_pii: true }
+        : { company_number: document.getElementById("demo-company").value.trim() };
+      demoSubmit.disabled = true;
+      demoStatus.textContent = "Sending request...";
+      demoOutput.textContent = "";
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const responseText = await response.text();
+        let result;
+        try {
+          result = JSON.parse(responseText);
+        } catch {
+          result = { error: responseText || "The API returned an empty response." };
+        }
+        demoOutput.textContent = JSON.stringify(result, null, 2);
+        const remaining = response.headers.get("X-Free-Remaining");
+        demoStatus.textContent = remaining === null
+          ? (response.status === 402 ? "Daily free allowance used. Choose a paid option or retry with x402." : "HTTP " + response.status)
+          : "HTTP " + response.status + " · " + remaining + " free calls remaining today";
+      } catch (error) {
+        demoOutput.textContent = JSON.stringify({
+          error: error instanceof Error ? error.message : String(error)
+        }, null, 2);
+        demoStatus.textContent = "Request failed. Check your connection and try again.";
+      } finally {
+        demoSubmit.disabled = false;
+      }
+    });
+  </script>
 </body>
 </html>`);
 });

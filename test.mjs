@@ -21,24 +21,29 @@ const landing = await fetch(`${baseUrl}/`, {
 assert.equal(landing.status, 200);
 assert.match(landing.headers.get("content-type") ?? "", /text\/html/i);
 const landingHtml = await landing.text();
-assert.match(landingHtml, /AgentGuard UK &amp; Sanitizer API/);
+assert.match(landingHtml, /AgentGuard — AI Security & UK Company KYB/);
 assert.match(landingHtml, /Live status: Operational/);
-assert.match(landingHtml, /\$0\.005 USDC/);
-assert.match(landingHtml, /\$0\.15 USDC/);
-assert.match(landingHtml, /Enterprise &amp; Prepaid API Keys/);
+assert.match(landingHtml, /name="viewport" content="width=device-width, initial-scale=1\.0"/);
+assert.match(landingHtml, /Interactive live sandbox/);
+assert.match(landingHtml, /value="00445790"/);
+assert.match(landingHtml, /\/v1\/verify-uk-company/);
+assert.match(landingHtml, /\/v1\/sanitize/);
+assert.match(landingHtml, /overflow-x:hidden/);
+assert.match(landingHtml, /overflow-x:auto/);
+assert.match(landingHtml, /Free Sandbox/);
+assert.match(landingHtml, /Pay-As-You-Go/);
+assert.match(landingHtml, /£15/);
+assert.match(landingHtml, /1,000 API credits/);
 assert.match(landingHtml, /£29/);
 assert.match(landingHtml, /5,000 requests per month/);
 assert.match(landingHtml, /£99/);
 assert.match(landingHtml, /25,000 requests per month/);
-assert.match(
-  landingHtml,
-  /mailto:keys@kybguard\.uk\?subject=KYBGuard%20API%20Key%20Request/,
-);
+assert.match(landingHtml, /Autonomous x402/);
+assert.match(landingHtml, /USDC/);
 assert.match(landingHtml, /\/llms\.txt/);
 assert.match(landingHtml, /\/openapi\.json/);
 assert.match(landingHtml, /\/\.well-known\/mcp\.json/);
-assert.match(landingHtml, /curl -i/);
-assert.match(landingHtml, /mcp-server\.mjs/);
+assert.match(landingHtml, /\/sitemap.xml/);
 
 const missingAdminAuth = await fetch(`${baseUrl}/admin/issue-key`, {
   method: "POST",
