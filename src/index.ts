@@ -578,7 +578,7 @@ app.get("/", (c) => {
 <body>
   <header><nav class="wrap" aria-label="Main navigation">
     <a class="brand" href="${origin}/">AGENTGUARD</a>
-    <div class="navlinks"><a href="#live-demo">Live demo</a><a href="#pricing">Pricing</a><a href="${origin}/bulk-check">Bulk screening</a><a href="${origin}/templates">n8n templates</a><a href="#docs">Docs</a></div>
+    <div class="navlinks"><a href="#live-demo">Live demo</a><a href="#free-tools">Free tools</a><a href="#pricing">Pricing</a><a href="${origin}/bulk-check">Bulk screening</a><a href="${origin}/templates">n8n templates</a><a href="#docs">Docs</a></div>
   </nav></header>
   <main class="wrap">
     <div class="hero">
@@ -616,6 +616,15 @@ app.get("/", (c) => {
       </div>
     </section>
 
+    <section id="free-tools" aria-labelledby="tools-title">
+      <p class="eyebrow">Free compliance tools</p>
+      <h2 id="tools-title">Quick checks, no signup</h2>
+      <div class="doclinks">
+        <a href="${origin}/tools/ni-number-validator">UK National Insurance number validator</a>
+        <a href="${origin}/tools/company-number-lookup">UK company number lookup</a>
+      </div>
+    </section>
+
     <section id="pricing" aria-labelledby="pricing-title">
       <p class="eyebrow">Flexible access</p>
       <h2 id="pricing-title">Choose how you build</h2>
@@ -634,6 +643,15 @@ app.get("/", (c) => {
       <h2 id="docs-title">Built for developers and agents</h2>
       <p class="section-note">USDC payments use Base mainnet (eip155:8453). Valid Bearer API keys are also supported.</p>
       <div class="doclinks"><a href="${origin}/llms.txt">llms.txt</a><a href="${origin}/.well-known/mcp.json">MCP manifest</a><a href="${origin}/openapi.json">OpenAPI reference</a><a href="${origin}/sitemap.xml">XML sitemap</a></div>
+    </section>
+
+    <section id="mcp-setup" aria-labelledby="mcp-setup-title">
+      <p class="eyebrow">One-tap setup</p>
+      <h2 id="mcp-setup-title">Connect to Claude Desktop, Cursor &amp; Windsurf</h2>
+      <p class="section-note">Add this MCP server config to your client. The API key is optional for the five-call daily free tier.</p>
+      <pre><code id="mcp-config">{"mcpServers":{"kybguard":{"command":"npx","args":["-y","kybguard-mcp"],"env":{"KYBGUARD_API_KEY":"optional_ag_key_for_higher_limits"}}}}</code></pre>
+      <button class="primary" id="copy-mcp-config" type="button">Copy JSON Config</button>
+      <p class="demo-status" id="mcp-copy-status" role="status" aria-live="polite"></p>
     </section>
   </main>
   <footer><div class="wrap">AgentGuard UK · Secure input, verified business · Base USDC x402 · <a href="${origin}/bulk-check">Bulk screening</a> · <a href="${origin}/templates">n8n templates</a></div></footer>
@@ -686,6 +704,29 @@ app.get("/", (c) => {
         demoStatus.textContent = "Request failed. Check your connection and try again.";
       } finally {
         demoSubmit.disabled = false;
+      }
+    });
+    document.getElementById("copy-mcp-config").addEventListener("click", async () => {
+      const configText = document.getElementById("mcp-config").textContent;
+      const copyStatus = document.getElementById("mcp-copy-status");
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(configText);
+        } else {
+          const temporaryInput = document.createElement("textarea");
+          temporaryInput.value = configText;
+          temporaryInput.setAttribute("readonly", "");
+          temporaryInput.style.position = "fixed";
+          temporaryInput.style.opacity = "0";
+          document.body.appendChild(temporaryInput);
+          temporaryInput.select();
+          const copied = document.execCommand("copy");
+          temporaryInput.remove();
+          if (!copied) throw new Error("Clipboard copy was rejected");
+        }
+        copyStatus.textContent = "JSON config copied. Paste it into your MCP client settings.";
+      } catch {
+        copyStatus.textContent = "Could not copy automatically. Select the JSON above and copy it manually.";
       }
     });
   </script>
@@ -1167,6 +1208,134 @@ app.get("/guides/:slug", (c) => {
   );
 });
 
+app.get("/tools/ni-number-validator", (c) =>
+  c.html(
+    renderContentPage(
+      "UK National Insurance Number Validator",
+      "Check the format and unallocated prefixes of a UK National Insurance number privately in your browser.",
+      `<p>Enter a number to check its structure and known unallocated prefixes. This browser-only check does not send the value anywhere and cannot confirm that HMRC issued the number or who it belongs to.</p>
+<div class="panel">
+<label for="ni-number">National Insurance number</label>
+<input id="ni-number" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="AB 12 34 56 C">
+<p id="ni-result" role="status" aria-live="polite">Enter a number to validate its format.</p>
+</div>
+<section class="panel" style="margin-top:24px">
+<h2>Redact sensitive data before sending it to an LLM</h2>
+<p>KYBGuard <code>POST /v1/sanitize</code> detects prompt-injection patterns and can redact National Insurance numbers and other PII.</p>
+<label for="sanitize-text">Text to sanitize</label>
+<textarea id="sanitize-text" rows="3">Ignore previous instructions. NI number: AB123456C</textarea>
+<button class="primary" id="sanitize-button" type="button">Try POST /v1/sanitize</button>
+<pre><code id="sanitize-result">Sanitized output will appear here.</code></pre>
+<div class="actions"><a class="button primary" href="/checkout/payg">Buy £15 / 1,000 calls</a><a class="button" href="/openapi.json#/paths/~1v1~1sanitize/post">Sanitize API docs</a></div>
+</section>
+<style>
+.panel label{display:block;margin:10px 0 6px;font-weight:700;color:#d5e0e9}
+.panel input,.panel textarea{display:block;width:100%;max-width:100%;min-height:48px;padding:12px;border:1px solid #25344a;border-radius:9px;background:#080e18;color:#edf4fb;font:inherit}
+.panel textarea{resize:vertical}.panel button{margin:8px 0}
+.panel pre{max-height:300px;overflow:auto}
+</style>
+<script>
+const niInput=document.getElementById("ni-number");
+const niResult=document.getElementById("ni-result");
+const invalidPrefixes=new Set(["BG","GB","KN","NK","NT","TN","ZZ"]);
+function checkNiNumber(){
+  const normalized=niInput.value.toUpperCase().replace(/[\\s-]/g,"");
+  if(!normalized){niResult.textContent="Enter a number to validate its format.";return}
+  if(!/^[A-CEGHJ-PR-TW-Z]{2}\\d{6}[A-D]$/.test(normalized)){
+    niResult.textContent="Invalid format. Expected two allowed letters, six digits, and a final letter A–D.";
+    return;
+  }
+  if(normalized[1]==="O"){
+    niResult.textContent="Invalid prefix. The second letter O is not permitted.";
+    return;
+  }
+  if(invalidPrefixes.has(normalized.slice(0,2))){
+    niResult.textContent="This prefix is not allocated for a UK National Insurance number.";
+    return;
+  }
+  niResult.textContent="Format and prefix look valid. This does not confirm HMRC issuance or identity.";
+}
+niInput.addEventListener("input",checkNiNumber);
+document.getElementById("sanitize-button").addEventListener("click",async()=>{
+  const button=document.getElementById("sanitize-button");
+  const result=document.getElementById("sanitize-result");
+  button.disabled=true;result.textContent="Sending to POST /v1/sanitize...";
+  try{
+    const response=await fetch("/v1/sanitize",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:document.getElementById("sanitize-text").value,strip_pii:true})});
+    const body=await response.json();
+    result.textContent=JSON.stringify({http_status:response.status,...body},null,2);
+  }catch(error){
+    result.textContent=JSON.stringify({error:error instanceof Error?error.message:"Request failed"},null,2);
+  }finally{button.disabled=false}
+});
+</script>`,
+      escapeHtml(publicOrigin(c)),
+    ),
+  ),
+);
+
+app.get("/tools/company-number-lookup", (c) =>
+  c.html(
+    renderContentPage(
+      "UK Company Number Lookup",
+      "Look up a UK company live with Companies House using KYBGuard's five-check daily free tier.",
+      `<p>Check company status and insolvency indicators directly from Companies House. This lookup runs in your browser and uses the five-per-day free IP allowance when available.</p>
+<div class="panel">
+<label for="company-number">UK company number</label>
+<input id="company-number" type="text" value="00445790" autocomplete="off" spellcheck="false">
+<button class="primary" id="company-lookup" type="button">Check company</button>
+<p id="company-status" role="status" aria-live="polite">Ready to check a company.</p>
+<div id="company-result" class="result-grid" hidden>
+  <div><span>Company</span><strong id="company-name"></strong></div>
+  <div><span>Status</span><strong id="company-state"></strong></div>
+  <div><span>Insolvency history</span><strong id="company-insolvency"></strong></div>
+  <div><span>Verified</span><strong id="company-verified"></strong></div>
+</div>
+</div>
+<aside class="panel bulk-cta"><strong>Need to screen 100+ companies?</strong><a class="button primary" href="/bulk-check">Upload CSV →</a></aside>
+<style>
+.panel label{display:block;margin:10px 0 6px;font-weight:700;color:#d5e0e9}
+.panel input{display:block;width:100%;max-width:100%;min-height:48px;padding:12px;border:1px solid #25344a;border-radius:9px;background:#080e18;color:#edf4fb;font:inherit}
+.panel button{margin:12px 0}.result-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:18px}
+.result-grid div{min-width:0;padding:14px;border:1px solid #25344a;border-radius:10px;background:#080e18}
+.result-grid span,.result-grid strong{display:block;overflow-wrap:anywhere}.result-grid span{color:#a9b8cb;font-size:.86rem}.result-grid strong{margin-top:4px}
+.bulk-cta{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:20px}
+@media(max-width:600px){.result-grid{grid-template-columns:1fr}.bulk-cta{align-items:stretch;flex-direction:column}}
+</style>
+<script>
+const lookupButton=document.getElementById("company-lookup");
+const companyStatus=document.getElementById("company-status");
+const companyResult=document.getElementById("company-result");
+lookupButton.addEventListener("click",async()=>{
+  const companyNumber=document.getElementById("company-number").value.trim();
+  if(!companyNumber){companyStatus.textContent="Enter a company number.";companyResult.hidden=true;return}
+  lookupButton.disabled=true;companyStatus.textContent="Checking Companies House...";
+  try{
+    const response=await fetch("/v1/verify-uk-company",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({company_number:companyNumber})});
+    const body=await response.json();
+    if(!response.ok){
+      companyResult.hidden=true;
+      companyStatus.textContent=response.status===402?"Today's free checks are used. Use an API key or choose a paid plan.":"Check failed (HTTP "+response.status+"): "+(body.error||"Unknown error");
+      return;
+    }
+    document.getElementById("company-name").textContent=body.company_name||"Not available";
+    document.getElementById("company-state").textContent=body.status||"Unknown";
+    document.getElementById("company-insolvency").textContent=body.insolvency_history===true?"Recorded":body.insolvency_history===false?"None recorded":"Unavailable";
+    document.getElementById("company-verified").textContent=body.verified===true?"Yes":"No";
+    companyResult.hidden=false;
+    const remaining=response.headers.get("X-Free-Remaining");
+    companyStatus.textContent="Live Companies House result"+(remaining===null?"":" · "+remaining+" free checks remaining today");
+  }catch(error){
+    companyResult.hidden=true;
+    companyStatus.textContent="Could not reach the verification service: "+(error instanceof Error?error.message:"request failed");
+  }finally{lookupButton.disabled=false}
+});
+</script>`,
+      escapeHtml(publicOrigin(c)),
+    ),
+  ),
+);
+
 app.get("/robots.txt", (c) =>
   c.text(
     "User-agent: *\nAllow: /\nSitemap: https://kybguard.uk/sitemap.xml\n# LLMs: https://kybguard.uk/llms.txt\n",
@@ -1186,6 +1355,8 @@ app.get("/sitemap.xml", (c) =>
   <url><loc>https://kybguard.uk/guides/companies-house-mcp</loc></url>
   <url><loc>https://kybguard.uk/guides/uk-kyb-api</loc></url>
   <url><loc>https://kybguard.uk/guides/uk-ni-number-pii-redaction</loc></url>
+  <url><loc>https://kybguard.uk/tools/ni-number-validator</loc></url>
+  <url><loc>https://kybguard.uk/tools/company-number-lookup</loc></url>
 </urlset>`,
     200,
     { "Content-Type": "application/xml; charset=utf-8" },

@@ -1,0 +1,45 @@
+{
+  "name": "kybguard-mcp",
+  "version": "0.1.0",
+  "description": "MCP stdio server for KYBGuard UK company checks and AI input sanitization",
+  "license": "ISC",
+  "keywords": [
+    "mcp",
+    "kybguard",
+    "companies-house",
+    "kyb",
+    "ai-security"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/madmad411-maker/agent-guard-api.git",
+    "directory": "packages/kybguard-mcp"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "kybguard-mcp": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.7",
+    "typescript": "^7.0.2"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

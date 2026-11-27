@@ -21,6 +21,9 @@ const landing = await fetch(`${baseUrl}/`, {
 assert.equal(landing.status, 200);
 assert.match(landing.headers.get("content-type") ?? "", /text\/html/i);
 const landingHtml = await landing.text();
+const landingScript = landingHtml.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+assert.ok(landingScript);
+new Function(landingScript);
 assert.match(landingHtml, /AgentGuard — AI Security & UK Company KYB/);
 assert.match(landingHtml, /Live status: Operational/);
 assert.match(landingHtml, /name="viewport" content="width=device-width, initial-scale=1\.0"/);
@@ -49,6 +52,22 @@ assert.match(landingHtml, /\/llms\.txt/);
 assert.match(landingHtml, /\/openapi\.json/);
 assert.match(landingHtml, /\/\.well-known\/mcp\.json/);
 assert.match(landingHtml, /\/sitemap.xml/);
+assert.match(landingHtml, /Connect to Claude Desktop, Cursor &amp; Windsurf/);
+assert.match(landingHtml, /Copy JSON Config/);
+assert.match(landingHtml, /optional_ag_key_for_higher_limits/);
+assert.match(landingHtml, /\/tools\/ni-number-validator/);
+assert.match(landingHtml, /\/tools\/company-number-lookup/);
+const mcpConfigText = landingHtml.match(/<code id="mcp-config">([^<]+)<\/code>/)?.[1];
+assert.ok(mcpConfigText);
+assert.deepEqual(JSON.parse(mcpConfigText), {
+  mcpServers: {
+    kybguard: {
+      command: "npx",
+      args: ["-y", "kybguard-mcp"],
+      env: { KYBGUARD_API_KEY: "optional_ag_key_for_higher_limits" },
+    },
+  },
+});
 
 const missingAdminAuth = await fetch(`${baseUrl}/admin/issue-key`, {
   method: "POST",
@@ -134,9 +153,59 @@ for (const path of [
   "/guides/companies-house-mcp",
   "/guides/uk-kyb-api",
   "/guides/uk-ni-number-pii-redaction",
+  "/tools/ni-number-validator",
+  "/tools/company-number-lookup",
 ]) {
   assert.match(sitemapXml, new RegExp(`https://kybguard\\.uk${path.replaceAll("/", "\\/")}`));
 }
+
+const niValidator = await fetch(`${baseUrl}/tools/ni-number-validator`);
+assert.equal(niValidator.status, 200);
+const niValidatorHtml = await niValidator.text();
+assert.match(niValidatorHtml, /UK National Insurance Number Validator/);
+assert.match(niValidatorHtml, /invalidPrefixes/);
+assert.match(niValidatorHtml, /POST \/v1\/sanitize/);
+assert.match(niValidatorHtml, /\/checkout\/payg/);
+const niValidatorScript = niValidatorHtml.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+assert.ok(niValidatorScript);
+new Function(niValidatorScript);
+const niHandlers = new Map();
+const niInputElement = {
+  value: "",
+  addEventListener: (event, handler) => niHandlers.set(event, handler),
+};
+const niResultElement = { textContent: "" };
+const niStubElement = { addEventListener() {} };
+const niElements = {
+  "ni-number": niInputElement,
+  "ni-result": niResultElement,
+  "sanitize-button": niStubElement,
+  "sanitize-text": niStubElement,
+  "sanitize-result": niStubElement,
+};
+new Function("document", niValidatorScript)({
+  getElementById: (id) => niElements[id],
+});
+niInputElement.value = "AB 12 34 56 C";
+niHandlers.get("input")();
+assert.match(niResultElement.textContent, /Format and prefix look valid/);
+niInputElement.value = "AO123456A";
+niHandlers.get("input")();
+assert.match(niResultElement.textContent, /second letter O/);
+niInputElement.value = "ZZ123456A";
+niHandlers.get("input")();
+assert.match(niResultElement.textContent, /not allocated/);
+
+const companyLookup = await fetch(`${baseUrl}/tools/company-number-lookup`);
+assert.equal(companyLookup.status, 200);
+const companyLookupHtml = await companyLookup.text();
+assert.match(companyLookupHtml, /value="00445790"/);
+assert.match(companyLookupHtml, /Need to screen 100\+ companies\?/);
+assert.match(companyLookupHtml, /Upload CSV →/);
+assert.match(companyLookupHtml, /fetch\("\/v1\/verify-uk-company"/);
+const companyLookupScript = companyLookupHtml.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+assert.ok(companyLookupScript);
+new Function(companyLookupScript);
 
 const bulkCheck = await fetch(`${baseUrl}/bulk-check`);
 assert.equal(bulkCheck.status, 200);
