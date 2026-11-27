@@ -8,7 +8,7 @@ import type { RouteConfig, RoutesConfig } from "@x402/core/server";
 import { Hono } from "hono";
 import type { Context } from "hono";
 
-type Bindings = {
+interface Env {
   WALLET_ADDRESS?: string;
   COMPANIES_HOUSE_API_KEY?: string;
   FACILITATOR_URL: string;
@@ -16,7 +16,9 @@ type Bindings = {
   KYB_CACHE?: KVNamespace;
   API_KEYS?: KVNamespace;
   ADMIN_SECRET?: string;
-};
+  STRIPE_SECRET_KEY: string;
+  STRIPE_WEBHOOK_SECRET: string;
+}
 
 type SanitizeResult = {
   clean_text: string;
@@ -44,7 +46,23 @@ const MAX_TEXT_LENGTH = 50_000;
 const KYB_CACHE_TTL_SECONDS = 6 * 60 * 60;
 const DEFAULT_PUBLIC_ORIGIN = "https://api.kybguard.uk";
 
-const app = new Hono<{ Bindings: Bindings }>();
+const app = new Hono<{ Bindings: Env }>();
+
+app.use("*", async (c, next) => {
+  const requestUrl = new URL(c.req.url);
+  const forwardedProto = c.req
+    .header("x-forwarded-proto")
+    ?.split(",")[0]
+    .trim()
+    .toLowerCase();
+
+  if (requestUrl.protocol === "http:" || forwardedProto === "http") {
+    return c.redirect(c.req.url.replace(/^http:/i, "https:"), 301);
+  }
+
+  await next();
+});
+
 const paymentMiddlewareCache = new Map<
   string,
   ReturnType<typeof paymentMiddleware>
@@ -57,6 +75,11 @@ const prices = {
   deepKyb: { amount: "150000", decimal: "$0.15" },
 } as const;
 
+const subscriptionPlans = {
+  starter: { amount: 2900, credits: 5000, label: "Starter" },
+  pro: { amount: 9900, credits: 25000, label: "Pro" },
+} as const;
+
 function isConfigured(value: string | undefined): value is string {
   return Boolean(value && !PLACEHOLDER.test(value.trim()));
 }
@@ -67,6 +90,102 @@ function validWallet(value: string | undefined): value is string {
       /^0x[a-fA-F0-9]{40}$/.test(value) &&
       !/^0x0{40}$/i.test(value),
   );
+}
+
+function generateApiKey(): string {
+  const keyBytes = crypto.getRandomValues(new Uint8Array(32));
+  return `kyb_live_${Array.from(keyBytes, (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("")}`;
+}
+
+async function saveApiKey(
+  env: Env,
+  metadata: Record<string, unknown>,
+  apiKey = generateApiKey(),
+): Promise<string> {
+  if (!env.API_KEYS) throw new Error("API key storage is not configured");
+  await env.API_KEYS.put(apiKey, JSON.stringify(metadata));
+  return apiKey;
+}
+
+async function keyForStripeEvent(secret: string, eventId: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const digest = new Uint8Array(
+    await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(eventId)),
+  );
+  return `kyb_live_${Array.from(digest, (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("")}`;
+}
+
+function hexToBytes(hex: string): Uint8Array | null {
+  if (!/^[a-f0-9]{64}$/i.test(hex)) return null;
+  return Uint8Array.from(
+    hex.match(/.{2}/g) ?? [],
+    (byte) => Number.parseInt(byte, 16),
+  );
+}
+
+async function verifyStripeSignature(
+  body: string,
+  signatureHeader: string | undefined,
+  secret: string,
+): Promise<boolean> {
+  if (!signatureHeader) return false;
+  const fields = signatureHeader.split(",").map((field) => field.split("=", 2));
+  const timestamp = fields.find(([name]) => name === "t")?.[1];
+  const timestampSeconds = Number(timestamp);
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (
+    !timestamp ||
+    !Number.isSafeInteger(timestampSeconds) ||
+    Math.abs(nowSeconds - timestampSeconds) > 300
+  ) {
+    return false;
+  }
+
+  const signatures = fields
+    .filter(([name]) => name === "v1")
+    .map(([, value]) => hexToBytes(value ?? ""))
+    .filter((value): value is Uint8Array => value !== null);
+  if (signatures.length === 0) return false;
+
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["verify"],
+  );
+  const signedPayload = new TextEncoder().encode(`${timestamp}.${body}`);
+  const results = await Promise.all(
+    signatures.map((signature) => {
+      const signatureBuffer = new ArrayBuffer(signature.byteLength);
+      new Uint8Array(signatureBuffer).set(signature);
+      return crypto.subtle.verify(
+        "HMAC",
+        key,
+        signatureBuffer,
+        signedPayload,
+      );
+    }),
+  );
+  return results.some(Boolean);
+}
+
+function subscriptionId(value: unknown): string | null {
+  if (typeof value === "string" && value.length > 0) return value;
+  if (isRecord(value) && typeof value.id === "string" && value.id.length > 0) {
+    return value.id;
+  }
+  return null;
 }
 
 function paymentRoutes(wallet: string): RoutesConfig {
@@ -100,6 +219,243 @@ function paymentRoutes(wallet: string): RoutesConfig {
     ),
   };
 }
+
+app.get("/checkout/success", async (c) => {
+  const sessionId = c.req.query("session_id");
+  if (!sessionId || !c.env.API_KEYS) {
+    return c.html(checkoutStatusPage("We couldn't find your checkout session."), 400);
+  }
+
+  let provisioned: unknown;
+  try {
+    provisioned = await c.env.API_KEYS.get(`session_${sessionId}`, "json");
+  } catch (error) {
+    console.error("Checkout session lookup failed", error);
+    return c.html(checkoutStatusPage("We couldn't load your API key. Please contact support."), 503);
+  }
+
+  if (!isRecord(provisioned) || typeof provisioned.api_key !== "string") {
+    return c.html(checkoutStatusPage("Provisioning your API key..."), 200);
+  }
+
+  const apiKey = escapeHtml(provisioned.api_key);
+  const curlCommand = escapeHtml(
+    `curl -X POST https://api.kybguard.uk/v1/verify-uk-company \\\n  -H 'Authorization: Bearer ${provisioned.api_key}' \\\n  -H 'Content-Type: application/json' \\\n  --data '{"company_number":"00000000"}'`,
+  );
+  return c.html(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Your AgentGuard API key</title><style>
+:root{color-scheme:dark;--bg:#0b1220;--panel:#121d2e;--line:#25344a;--text:#edf4ff;--muted:#a9b8cb;--green:#57e3ad}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 50% 0,#17283b,var(--bg) 60%);color:var(--text);font:16px/1.6 system-ui,sans-serif;display:grid;place-items:center;padding:24px}
+main{width:min(100%,680px);padding:clamp(22px,6vw,42px);border:1px solid var(--line);border-radius:20px;background:#101a29eF;box-shadow:0 24px 80px #0006}h1{font-size:clamp(1.8rem,6vw,2.6rem);line-height:1.15;margin:12px 0}.muted{color:var(--muted)}.badge{color:var(--green);font-weight:700}
+.key{margin:22px 0 12px;padding:14px;border:1px solid var(--line);border-radius:12px;background:#09111d;overflow-wrap:anywhere;font: .94rem/1.5 ui-monospace,monospace}
+button{border:0;border-radius:10px;padding:12px 18px;background:var(--green);color:#07160f;font-weight:750;font-size:1rem;cursor:pointer}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#09111d;border:1px solid var(--line);padding:16px;border-radius:12px;color:#d9e8f9;font-size:.86rem}a{color:var(--green)}
+</style></head><body><main><span class="badge">Payment confirmed</span><h1>Your API key is ready</h1>
+<p class="muted">Keep this key private. You can use it immediately to authenticate API requests.</p>
+<div class="key" id="api-key">${apiKey}</div><button id="copy-key" type="button">Copy API key</button>
+<h2>Try a company check</h2><p class="muted">Replace the example company number with the one you want to verify.</p><pre><code>${curlCommand}</code></pre>
+<p class="muted">Need help? Visit <a href="https://kybguard.uk">kybguard.uk</a>.</p></main>
+<script>document.getElementById("copy-key").addEventListener("click",async()=>{const button=document.getElementById("copy-key");try{await navigator.clipboard.writeText(document.getElementById("api-key").textContent||"");button.textContent="Copied";}catch{button.textContent="Copy unavailable";}});</script>
+</body></html>`);
+});
+
+function checkoutStatusPage(message: string): string {
+  const refresh = message.startsWith("Provisioning")
+    ? '<meta http-equiv="refresh" content="2">'
+    : "";
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${refresh}
+<title>AgentGuard checkout</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:#0b1220;color:#edf4ff;font:16px/1.6 system-ui,sans-serif}main{max-width:560px;padding:32px;border:1px solid #25344a;border-radius:18px;background:#121d2e}p{color:#a9b8cb}</style></head><body><main><h1>${escapeHtml(message)}</h1><p>This page will update automatically when your key is available.</p></main></body></html>`;
+}
+
+app.get("/checkout/:plan", async (c) => {
+  const planName = c.req.param("plan");
+  if (planName !== "starter" && planName !== "pro") {
+    return c.json({ error: "Plan must be starter or pro" }, 400);
+  }
+
+  const stripeSecret = c.env.STRIPE_SECRET_KEY;
+  if (!stripeSecret) return c.json({ error: "Stripe is not configured" }, 503);
+  const plan = subscriptionPlans[planName];
+  const form = new URLSearchParams({
+    mode: "subscription",
+    "line_items[0][price_data][currency]": "gbp",
+    "line_items[0][price_data][unit_amount]": String(plan.amount),
+    "line_items[0][price_data][recurring][interval]": "month",
+    "line_items[0][price_data][product_data][name]":
+      `AgentGuard UK ${plan.label} (${plan.credits.toLocaleString("en-GB")} requests/mo)`,
+    "line_items[0][quantity]": "1",
+    "metadata[plan]": planName,
+    "metadata[credits]": String(plan.credits),
+    success_url:
+      "https://kybguard.uk/checkout/success?session_id={CHECKOUT_SESSION_ID}",
+    cancel_url: "https://kybguard.uk/",
+  });
+
+  let stripeResponse: Response;
+  try {
+    stripeResponse = await fetch("https://api.stripe.com/v1/checkout/sessions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${stripeSecret}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: form,
+    });
+  } catch (error) {
+    console.error("Stripe Checkout request failed", error);
+    return c.json({ error: "Unable to create Stripe Checkout session" }, 502);
+  }
+
+  let stripeResult: unknown;
+  try {
+    stripeResult = await stripeResponse.json();
+  } catch (error) {
+    console.error("Stripe Checkout returned invalid JSON", error);
+    return c.json({ error: "Stripe returned an invalid response" }, 502);
+  }
+  if (!stripeResponse.ok) {
+    const details =
+      isRecord(stripeResult) &&
+      isRecord(stripeResult.error) &&
+      typeof stripeResult.error.message === "string"
+        ? stripeResult.error.message
+        : "Stripe rejected the Checkout session request";
+    return c.json({ error: "Stripe Checkout session creation failed", details }, 502);
+  }
+  if (!isRecord(stripeResult) || typeof stripeResult.url !== "string") {
+    return c.json({ error: "Stripe returned no Checkout URL" }, 502);
+  }
+  return c.redirect(stripeResult.url, 302);
+});
+
+app.post("/webhooks/stripe", async (c) => {
+  const body = await c.req.text();
+  const webhookSecret = c.env.STRIPE_WEBHOOK_SECRET;
+  if (!webhookSecret) return c.json({ error: "Stripe webhook is not configured" }, 503);
+
+  let signatureValid: boolean;
+  try {
+    signatureValid = await verifyStripeSignature(
+      body,
+      c.req.header("Stripe-Signature"),
+      webhookSecret,
+    );
+  } catch (error) {
+    console.error("Stripe signature verification failed", error);
+    return c.json({ error: "Invalid Stripe signature" }, 400);
+  }
+  if (!signatureValid) return c.json({ error: "Invalid Stripe signature" }, 400);
+
+  let event: unknown;
+  try {
+    event = JSON.parse(body);
+  } catch {
+    return c.json({ error: "Invalid Stripe event JSON" }, 400);
+  }
+  if (
+    !isRecord(event) ||
+    typeof event.id !== "string" ||
+    typeof event.type !== "string" ||
+    !isRecord(event.data) ||
+    !isRecord(event.data.object)
+  ) {
+    return c.json({ error: "Invalid Stripe event payload" }, 400);
+  }
+  if (
+    event.type !== "checkout.session.completed" &&
+    event.type !== "invoice.paid"
+  ) {
+    return c.json({ received: true });
+  }
+  if (!c.env.KYB_CACHE || !c.env.API_KEYS) {
+    return c.json({ error: "Stripe webhook storage is not configured" }, 503);
+  }
+
+  try {
+    const eventKey = `stripe_evt_${event.id}`;
+    if (await c.env.KYB_CACHE.get(eventKey)) return c.json({ received: true });
+
+    const stripeObject = event.data.object;
+    if (event.type === "checkout.session.completed") {
+      const metadata = isRecord(stripeObject.metadata) ? stripeObject.metadata : {};
+      const planName = metadata.plan;
+      const credits = metadata.credits;
+      if (
+        (planName !== "starter" && planName !== "pro") ||
+        credits !== String(subscriptionPlans[planName].credits) ||
+        typeof stripeObject.id !== "string"
+      ) {
+        return c.json({ error: "Checkout session is missing valid plan metadata" }, 400);
+      }
+
+      const plan = subscriptionPlans[planName];
+      const customerDetails = isRecord(stripeObject.customer_details)
+        ? stripeObject.customer_details
+        : {};
+      const email =
+        typeof customerDetails.email === "string"
+          ? customerDetails.email
+          : typeof stripeObject.customer_email === "string"
+            ? stripeObject.customer_email
+            : "";
+      const subId = subscriptionId(stripeObject.subscription);
+      const apiKey = await keyForStripeEvent(webhookSecret, event.id);
+      await saveApiKey(
+        c.env,
+        {
+          customer_email: email,
+          plan: planName,
+          created_at: new Date().toISOString(),
+          credits: plan.credits,
+          monthly_quota: plan.credits,
+          requests_used: 0,
+          subscription_id: subId,
+        },
+        apiKey,
+      );
+      if (subId) {
+        await c.env.API_KEYS.put(`subscription_${subId}`, apiKey);
+      }
+      await c.env.API_KEYS.put(
+        `session_${stripeObject.id}`,
+        JSON.stringify({ api_key: apiKey, plan: planName, credits: plan.credits }),
+        { expirationTtl: 3600 },
+      );
+    } else if (
+      event.type === "invoice.paid" &&
+      stripeObject.billing_reason === "subscription_cycle"
+    ) {
+      const subId = subscriptionId(stripeObject.subscription);
+      if (subId) {
+        const apiKey = await c.env.API_KEYS.get(`subscription_${subId}`);
+        if (apiKey) {
+          const currentMetadata = await c.env.API_KEYS.get(apiKey, "json");
+          if (isRecord(currentMetadata)) {
+            const planName = currentMetadata.plan;
+            if (planName === "starter" || planName === "pro") {
+              await c.env.API_KEYS.put(
+                apiKey,
+                JSON.stringify({
+                  ...currentMetadata,
+                  credits: subscriptionPlans[planName].credits,
+                  monthly_quota: subscriptionPlans[planName].credits,
+                  requests_used: 0,
+                  quota_reset_at: new Date().toISOString(),
+                }),
+              );
+            }
+          }
+        }
+      }
+    }
+
+    await c.env.KYB_CACHE.put(eventKey, "1", { expirationTtl: 7 * 24 * 60 * 60 });
+    return c.json({ received: true });
+  } catch (error) {
+    console.error("Stripe webhook processing failed", error);
+    return c.json({ error: "Stripe event processing failed" }, 500);
+  }
+});
 
 app.get("/", (c) => {
   if (!acceptsHtml(c.req.header("Accept"))) {
@@ -882,7 +1238,7 @@ app.post("/v1/uk-deep-kyb", async (c) => {
   return c.json(result.body, result.status);
 });
 
-async function readJson(c: Context<{ Bindings: Bindings }>) {
+async function readJson(c: Context<{ Bindings: Env }>) {
   try {
     const body: unknown = await c.req.json();
     return isRecord(body) ? body : null;
@@ -895,7 +1251,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function publicOrigin(c: Context<{ Bindings: Bindings }>): string {
+function publicOrigin(c: Context<{ Bindings: Env }>): string {
   try {
     const origin = new URL(c.req.url).origin;
     return origin === "null" ? DEFAULT_PUBLIC_ORIGIN : origin;
@@ -1032,7 +1388,7 @@ function sanitizeText(text: string, stripPii: boolean): SanitizeResult {
 
 async function verifyCompany(
   companyNumber: string,
-  env: Bindings,
+  env: Env,
 ): Promise<CompanyResult> {
   const checkedAt = new Date().toISOString();
   if (!/^[A-Za-z0-9]{1,8}$/.test(companyNumber)) {
@@ -1102,7 +1458,7 @@ async function verifyCompany(
 
 async function verifyDeepKyb(
   companyNumber: string,
-  env: Bindings,
+  env: Env,
 ): Promise<CompanyResult> {
   const checkedAt = new Date().toISOString();
   const normalizedNumber = companyNumber.toUpperCase();
@@ -1230,7 +1586,7 @@ function resourceItems(data: unknown): Record<string, unknown>[] {
 async function fetchCompanyResource(
   companyNumber: string,
   resourcePath: string,
-  env: Bindings,
+  env: Env,
 ): Promise<CompanyResource> {
   if (!isConfigured(env.COMPANIES_HOUSE_API_KEY)) {
     return {
@@ -1327,4 +1683,4 @@ async function fetchCompanyResource(
 
 export default {
   fetch: app.fetch,
-} satisfies ExportedHandler<Bindings>;
+} satisfies ExportedHandler<Env>;
