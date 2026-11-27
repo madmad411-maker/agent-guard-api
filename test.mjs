@@ -100,6 +100,24 @@ assert.match(llms, /\$0\.02 USDC/);
 assert.match(llms, /\$0\.022 USDC/);
 assert.match(llms, /\$0\.15 USDC/);
 assert.match(llms, /Authorization: Bearer/);
+assert.match(llms, /five free calls per IP per UTC day/);
+
+const robots = await fetch(`${baseUrl}/robots.txt`);
+assert.equal(robots.status, 200);
+const robotsTxt = await robots.text();
+assert.match(robotsTxt, /User-agent: \*/);
+assert.match(robotsTxt, /Allow: \//);
+assert.match(robotsTxt, /Sitemap: https:\/\/kybguard\.uk\/sitemap\.xml/);
+assert.match(robotsTxt, /# LLMs: https:\/\/kybguard\.uk\/llms\.txt/);
+
+const sitemap = await fetch(`${baseUrl}/sitemap.xml`);
+assert.equal(sitemap.status, 200);
+assert.match(sitemap.headers.get("content-type") ?? "", /application\/xml/i);
+const sitemapXml = await sitemap.text();
+assert.match(sitemapXml, /https:\/\/kybguard\.uk\/<\/loc>/);
+assert.match(sitemapXml, /https:\/\/kybguard\.uk\/llms\.txt/);
+assert.match(sitemapXml, /https:\/\/kybguard\.uk\/\.well-known\/mcp\.json/);
+assert.match(sitemapXml, /https:\/\/kybguard\.uk\/openapi\.json/);
 
 const mcpResponse = await fetch(`${baseUrl}/.well-known/mcp.json`);
 assert.equal(mcpResponse.status, 200);
@@ -120,23 +138,54 @@ assert.equal(openapi.openapi, "3.1.0");
 assert.equal(openapi.servers[0].url, manifestOrigin);
 assert.equal(openapi.paths["/v1/sanitize"].post["x-x402-payment"].network, "eip155:8453");
 assert.equal(openapi.paths["/v1/uk-deep-kyb"].post["x-x402-payment"].network, "eip155:8453");
+assert.equal(openapi.paths["/audit/{audit_id}"].get.operationId, "getAuditReceipt");
+assert.ok(openapi.paths["/v1/full-audit"].post.responses["200"]);
 assert.equal(
   openapi.paths["/v1/uk-deep-kyb"].post.responses["402"].headers["PAYMENT-REQUIRED"].schema.type,
   "string",
 );
 
-const unpaid = await fetch(`${baseUrl}/v1/sanitize`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ text: "hello", strip_pii: false }),
-});
-assert.equal(unpaid.status, 402, "POST /v1/sanitize should require payment");
+const missingReceipt = await fetch(`${baseUrl}/audit/${"0".repeat(64)}`);
+assert.equal(missingReceipt.status, 404);
+
+const freeSandboxIp = `198.51.100.${Math.floor(Math.random() * 254) + 1}`;
+const freeSanitize = () =>
+  fetch(`${baseUrl}/v1/sanitize`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "cf-connecting-ip": freeSandboxIp,
+    },
+    body: JSON.stringify({
+      text: "Contact test@example.com",
+      strip_pii: true,
+    }),
+  });
+const firstFree = await freeSanitize();
+assert.equal(firstFree.status, 200, "first unauthenticated sanitize call should be free");
+assert.equal(firstFree.headers.get("X-Free-Remaining"), "4");
+const upgradeUrl = new URL(firstFree.headers.get("X-Upgrade-Url"));
+assert.equal(upgradeUrl.protocol, "https:");
+assert.equal(upgradeUrl.pathname, "/checkout/starter");
+const sanitizedFree = await firstFree.json();
+assert.equal(sanitizedFree.pii_redacted, true);
+assert.match(sanitizedFree.clean_text, /\[REDACTED_EMAIL\]/);
+assert.doesNotMatch(sanitizedFree.clean_text, /test@example\.com/);
+
+for (const remaining of ["3", "2", "1", "0"]) {
+  const freeResponse = await freeSanitize();
+  assert.equal(freeResponse.status, 200, "up to five calls should be free");
+  assert.equal(freeResponse.headers.get("X-Free-Remaining"), remaining);
+}
+
+const freeQuotaExceeded = await freeSanitize();
+assert.equal(freeQuotaExceeded.status, 402, "sixth free call should require payment");
 assert.ok(
-  unpaid.headers.get("PAYMENT-REQUIRED"),
+  freeQuotaExceeded.headers.get("PAYMENT-REQUIRED"),
   "402 response should include a PAYMENT-REQUIRED x402 header",
 );
 const payment = JSON.parse(
-  Buffer.from(unpaid.headers.get("PAYMENT-REQUIRED"), "base64").toString("utf8"),
+  Buffer.from(freeQuotaExceeded.headers.get("PAYMENT-REQUIRED"), "base64").toString("utf8"),
 );
 assert.equal(payment.x402Version, 2);
 assert.ok(payment.accepts?.some((item) => item.network === "eip155:8453"));
@@ -146,6 +195,29 @@ assert.ok(
   ),
   "challenge should require exactly 5000 token atomic units",
 );
+
+const freeVerify = await fetch(`${baseUrl}/v1/verify-uk-company`, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "cf-connecting-ip": `192.0.2.${Math.floor(Math.random() * 254) + 1}`,
+  },
+  body: JSON.stringify({ company_number: "!" }),
+});
+assert.equal(freeVerify.status, 400, "unauthenticated company verification should reach the handler");
+assert.equal(freeVerify.headers.get("X-Free-Remaining"), "4");
+
+const paymentHeaderRequest = await fetch(`${baseUrl}/v1/sanitize`, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "cf-connecting-ip": `203.0.113.${Math.floor(Math.random() * 254) + 1}`,
+    "PAYMENT-SIGNATURE": "invalid-test-signature",
+  },
+  body: JSON.stringify({ text: "payment header test", strip_pii: false }),
+});
+assert.equal(paymentHeaderRequest.status, 402);
+assert.equal(paymentHeaderRequest.headers.get("X-Free-Remaining"), null);
 
 const deepKyb = await fetch(`${baseUrl}/v1/uk-deep-kyb`, {
   method: "POST",
@@ -178,6 +250,7 @@ const invalidKey = await fetch(`${baseUrl}/v1/sanitize`, {
   body: JSON.stringify({ text: "invalid key", strip_pii: false }),
 });
 assert.equal(invalidKey.status, 402, "an unknown API key must not bypass payment");
+assert.equal(invalidKey.headers.get("X-Free-Remaining"), null);
 
 if (process.env.TEST_API_KEY) {
   const keyed = await fetch(`${baseUrl}/v1/sanitize`, {
@@ -226,8 +299,8 @@ const bridgeMessages = bridge.stdout
 assert.equal(bridgeMessages[0].result.serverInfo.name, "agentguard-cloudflare-bridge");
 assert.equal(bridgeMessages[1].result.tools.length, 4);
 const bridgeCall = bridgeMessages.find((message) => message.id === 3);
-assert.equal(bridgeCall.result.isError, true);
-assert.match(bridgeCall.result.content[0].text, /"http_status":402/);
-assert.match(bridgeCall.result.content[0].text, /"payment_required":"/);
+assert.equal(bridgeCall.result.isError, false);
+assert.match(bridgeCall.result.content[0].text, /"http_status":200/);
+assert.match(bridgeCall.result.content[0].text, /"clean_text":"bridge test"/);
 
-console.log("Discovery, x402 pricing, Bearer auth, and MCP bridge tests passed.");
+console.log("Discovery, free sandbox, x402 pricing, Bearer auth, and MCP bridge tests passed.");

@@ -39,11 +39,24 @@ type CompanyResource = {
   cached: boolean;
 };
 
+type AuditReceipt = {
+  audit_id: string;
+  timestamp: string;
+  company_number: string;
+  company_status: string;
+  insolvency_flag: boolean | null;
+  sanitized: true;
+};
+
 const BASE_NETWORK: `${string}:${string}` = "eip155:8453";
 const COMPANY_API = "https://api.company-information.service.gov.uk/company/";
 const PLACEHOLDER = /^\[PASTE_.+_HERE\]$/;
 const MAX_TEXT_LENGTH = 50_000;
 const KYB_CACHE_TTL_SECONDS = 6 * 60 * 60;
+const FREE_DAILY_LIMIT = 5;
+const FREE_COUNTER_TTL_SECONDS = 24 * 60 * 60;
+const AUDIT_RECEIPT_TTL_SECONDS = 30 * 24 * 60 * 60;
+const FREE_UPGRADE_URL = "https://kybguard.uk/checkout/starter";
 const DEFAULT_PUBLIC_ORIGIN = "https://api.kybguard.uk";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -479,7 +492,7 @@ app.get("/", (c) => {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#090d18">
-  <meta name="description" content="Real-time AI agent sanitization and UK company KYB verification, paid with x402 USDC on Base.">
+  <meta name="description" content="Real-time AI agent sanitization and UK company KYB verification, with a five-call daily free sandbox and x402 USDC on Base.">
   <title>AgentGuard — AI Security & UK Company KYB</title>
   <style>
     :root{color-scheme:dark;--bg:#090d18;--panel:#111827;--line:#253148;--text:#edf3ff;--muted:#a9b7cb;--green:#57e3ad;--blue:#8eb8ff;--purple:#c3a6ff}
@@ -533,7 +546,7 @@ app.get("/", (c) => {
       <span class="status"><span class="dot" aria-hidden="true"></span> Live status: Operational</span>
       <p class="eyebrow">AI security · UK company KYB</p>
       <h1>Trust the input.<br>Verify the business.</h1>
-      <p class="lead">Sanitize agent-bound text, redact sensitive data, and verify UK companies with live Companies House records. Pay per request with x402 USDC on Base, or use a Bearer API key.</p>
+      <p class="lead">Sanitize agent-bound text, redact sensitive data, and verify UK companies with live Companies House records. Try five free daily calls per IP, then pay per request with x402 USDC on Base or use a Bearer API key.</p>
       <div class="actions"><a class="button primary" href="#quickstart">Get started</a><a class="button" href="${origin}/llms.txt">Read agent docs</a></div>
     </div>
 
@@ -560,7 +573,7 @@ app.get("/", (c) => {
     <section id="quickstart" aria-labelledby="quickstart-title">
       <h2 id="quickstart-title">Quick start</h2>
       <div class="codegrid">
-        <div><h3>Try the API with curl</h3><p class="rail">An unpaid request returns HTTP 402 with x402 payment requirements.</p>
+        <div><h3>Try the API with curl</h3><p class="rail">Sanitization and company verification include five free calls per IP each day; later unpaid calls return HTTP 402 with x402 payment requirements.</p>
           <pre><code>curl -i ${origin}/v1/sanitize \\
   -H 'Content-Type: application/json' \\
   --data '{"text":"untrusted input","strip_pii":true}'</code></pre>
@@ -669,6 +682,89 @@ app.post("/admin/issue-key", async (c) => {
   );
 });
 
+app.get("/audit/:audit_id", async (c) => {
+  const auditId = c.req.param("audit_id");
+  if (!/^[a-f0-9]{64}$/i.test(auditId)) return c.notFound();
+  if (!c.env.KYB_CACHE) {
+    return c.json({ error: "Audit receipt storage is not configured" }, 503);
+  }
+
+  let storedReceipt: unknown;
+  try {
+    storedReceipt = await c.env.KYB_CACHE.get(`audit:${auditId}`, "json");
+  } catch (error) {
+    console.error("Audit receipt lookup failed", error);
+    return c.json({ error: "Audit receipt is temporarily unavailable" }, 503);
+  }
+  if (!isAuditReceipt(storedReceipt, auditId)) return c.notFound();
+
+  const checkStatus =
+    storedReceipt.company_status.toLowerCase() === "active" &&
+    storedReceipt.insolvency_flag === false
+      ? "PASS"
+      : "REVIEW";
+  const receiptResponse = {
+    audit_id: storedReceipt.audit_id,
+    timestamp: storedReceipt.timestamp,
+    company_number: storedReceipt.company_number,
+    company_status: storedReceipt.company_status,
+    insolvency_flag: storedReceipt.insolvency_flag,
+    sanitized: storedReceipt.sanitized,
+    check_status: checkStatus,
+  };
+  const acceptsJson = c.req.header("Accept")?.split(",").some(
+    (mediaRange) =>
+      mediaRange.split(";")[0].trim().toLowerCase() === "application/json",
+  );
+  if (acceptsJson) {
+    return c.json(receiptResponse);
+  }
+
+  const insolvencyStatus =
+    storedReceipt.insolvency_flag === false
+      ? "No insolvency recorded"
+      : storedReceipt.insolvency_flag === true
+        ? "Insolvency recorded"
+        : "Status unavailable";
+  return c.html(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compliance audit receipt</title><style>
+body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:#0b1220;color:#edf4ff;font:16px/1.6 system-ui,sans-serif}
+main{width:min(100%,600px);padding:32px;border:1px solid #25344a;border-radius:18px;background:#121d2e}
+.badge{display:inline-block;padding:5px 12px;border-radius:999px;font-weight:750}.pass{background:#123a2d;color:#57e3ad}.review{background:#49351b;color:#ffd27a}
+dt{color:#a9b8cb}dd{margin:0 0 14px;overflow-wrap:anywhere}
+</style></head><body><main>
+<span class="badge ${checkStatus === "PASS" ? "pass" : "review"}">${checkStatus}</span>
+<h1>Compliance audit receipt</h1>
+<dl><dt>Verified at</dt><dd>${escapeHtml(storedReceipt.timestamp)}</dd>
+<dt>Company number</dt><dd>${escapeHtml(storedReceipt.company_number)}</dd>
+<dt>Company status</dt><dd>${escapeHtml(storedReceipt.company_status)}</dd>
+<dt>Insolvency check</dt><dd>${escapeHtml(insolvencyStatus)}</dd>
+<dt>Sanitized</dt><dd>Yes</dd>
+<dt>Audit ID</dt><dd>${escapeHtml(storedReceipt.audit_id)}</dd></dl>
+</main></body></html>`);
+});
+
+app.get("/robots.txt", (c) =>
+  c.text(
+    "User-agent: *\nAllow: /\nSitemap: https://kybguard.uk/sitemap.xml\n# LLMs: https://kybguard.uk/llms.txt\n",
+  ),
+);
+
+app.get("/sitemap.xml", (c) =>
+  c.body(
+    `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://kybguard.uk/</loc></url>
+  <url><loc>https://kybguard.uk/llms.txt</loc></url>
+  <url><loc>https://kybguard.uk/.well-known/mcp.json</loc></url>
+  <url><loc>https://kybguard.uk/openapi.json</loc></url>
+</urlset>`,
+    200,
+    { "Content-Type": "application/xml; charset=utf-8" },
+  ),
+);
+
 app.get("/llms.txt", (c) =>
   c.text(
     `# AgentGuard UK & Sanitizer API
@@ -677,7 +773,7 @@ Base URL: ${publicOrigin(c)}
 Machine-readable security sanitization and UK company compliance checks.
 Protocol: x402 HTTP 402 micropayments. Network: Base mainnet (eip155:8453).
 Payment token: USDC. Send JSON with Content-Type: application/json.
-An unpaid request returns HTTP 402 with x402 payment requirements; retry with a valid payment.
+Unauthenticated requests to sanitization and company verification receive five free calls per IP per UTC day; later unpaid calls return HTTP 402 with x402 payment requirements.
 Alternatively send Authorization: Bearer <token> for a token stored as a key in the API_KEYS KV namespace.
 
 ## POST /v1/sanitize — $0.005 USDC (5000 atomic units)
@@ -696,8 +792,11 @@ Companies House has_insolvency_history value of false.
 
 ## POST /v1/full-audit — $0.022 USDC (22000 atomic units)
 Input JSON: {"company_number":"01234567","payload_text":"untrusted text"}
-Output JSON: {"audit_id":"64-character SHA-256 hex","company_verification":{...},"sanitization":{...}}
-Both checks run concurrently. The audit ID hashes the canonical results and audit timestamp.
+Output JSON: {"audit_id":"64-character SHA-256 hex","company_verification":{...},"sanitization":{...},"receipt_url":"https://kybguard.uk/audit/{audit_id}"}
+Both checks run concurrently. A non-PII receipt is available at the receipt URL for 30 days.
+
+## GET /audit/{audit_id}
+Returns the verification receipt as JSON when Accept: application/json, otherwise as an HTML badge.
 
 ## POST /v1/uk-deep-kyb — $0.15 USDC (150000 atomic units)
 Input JSON: {"company_number":"01234567"}
@@ -850,7 +949,7 @@ app.get("/openapi.json", (c) =>
       title: "AgentGuard UK & Sanitizer API",
       version: "1.0.0",
       description:
-        "AI agent text sanitization and UK company checks protected by x402 USDC payments on Base. A valid Authorization: Bearer API key bypasses x402.",
+        "AI agent text sanitization and UK company checks with five free daily calls per IP on eligible endpoints, plus x402 USDC payments on Base. A valid Authorization: Bearer API key bypasses x402.",
     },
     servers: [{ url: publicOrigin(c) }],
     paths: {
@@ -901,7 +1000,7 @@ app.get("/openapi.json", (c) =>
       "/v1/sanitize": {
         post: {
           summary: "Sanitize untrusted text",
-          description: "Price: $0.005 USDC (5000 atomic units), Base.",
+          description: "Five unauthenticated free calls per IP per UTC day, then $0.005 USDC (5000 atomic units) on Base.",
           ...paidOperation(
             "sanitizeText",
             {
@@ -936,7 +1035,7 @@ app.get("/openapi.json", (c) =>
       "/v1/verify-uk-company": {
         post: {
           summary: "Verify a UK company",
-          description: "Price: $0.02 USDC (20000 atomic units), Base.",
+          description: "Five unauthenticated free calls per IP per UTC day, then $0.02 USDC (20000 atomic units) on Base.",
           ...paidOperation(
             "verifyUkCompany",
             {
@@ -1001,14 +1100,41 @@ app.get("/openapi.json", (c) =>
                 },
                 company_verification: { type: "object" },
                 sanitization: { type: "object" },
+                receipt_url: { type: "string", format: "uri" },
               },
               required: [
                 "audit_id",
                 "company_verification",
                 "sanitization",
+                "receipt_url",
               ],
             },
           ),
+        },
+      },
+      "/audit/{audit_id}": {
+        get: {
+          operationId: "getAuditReceipt",
+          summary: "Retrieve a compliance audit receipt",
+          parameters: [
+            {
+              name: "audit_id",
+              in: "path",
+              required: true,
+              schema: { type: "string", pattern: "^[a-f0-9]{64}$" },
+            },
+          ],
+          responses: {
+            "200": {
+              description: "Non-PII verification receipt",
+              content: {
+                "application/json": { schema: { type: "object" } },
+                "text/html": { schema: { type: "string" } },
+              },
+            },
+            "404": { description: "Receipt not found or expired" },
+            "503": { description: "Receipt storage is unavailable" },
+          },
         },
       },
       "/v1/uk-deep-kyb": {
@@ -1072,7 +1198,7 @@ app.get("/openapi.json", (c) =>
         X402Payment: {
           type: "object",
           description:
-            "Requests without a valid Bearer API key return HTTP 402 and a PAYMENT-REQUIRED header containing x402 requirements for exact USDC on Base (eip155:8453).",
+            "Sanitization and company verification allow five unauthenticated free calls per IP per UTC day. After the free quota, requests without a valid Bearer API key return HTTP 402 and a PAYMENT-REQUIRED header containing x402 requirements for exact USDC on Base (eip155:8453).",
         },
       },
     },
@@ -1122,6 +1248,58 @@ function paidOperation(
 
 app.use("/v1/*", async (c, next) => {
   const authorization = c.req.header("Authorization");
+  const isFreeSandboxRoute =
+    c.req.method === "POST" &&
+    (c.req.path === "/v1/sanitize" ||
+      c.req.path === "/v1/verify-uk-company");
+  const hasBearerAuthorization = /^Bearer(?:\s|$)/i.test(authorization ?? "");
+  const hasPaymentHeader =
+    c.req.raw.headers.has("PAYMENT-SIGNATURE") ||
+    c.req.raw.headers.has("X-PAYMENT");
+
+  if (
+    isFreeSandboxRoute &&
+    !hasBearerAuthorization &&
+    !hasPaymentHeader &&
+    c.env.KYB_CACHE
+  ) {
+    const ip = c.req.header("cf-connecting-ip") || "unknown";
+    const day = new Date().toISOString().slice(0, 10).replace(/-/g, "_");
+    const counterKey = `free_ip:${ip}:${day}`;
+    let storedCount: string | null;
+    try {
+      storedCount = await c.env.KYB_CACHE.get(counterKey);
+    } catch (error) {
+      console.error("Free sandbox quota lookup failed", error);
+      return c.json({ error: "Free sandbox quota is temporarily unavailable" }, 503);
+    }
+
+    if (storedCount !== null && !/^\d+$/.test(storedCount)) {
+      console.error("Free sandbox quota counter contains an invalid value");
+      return c.json({ error: "Free sandbox quota is temporarily unavailable" }, 503);
+    }
+    const count = storedCount === null ? 0 : Number(storedCount);
+    if (!Number.isSafeInteger(count)) {
+      console.error("Free sandbox quota counter exceeds the supported range");
+      return c.json({ error: "Free sandbox quota is temporarily unavailable" }, 503);
+    }
+    if (count < FREE_DAILY_LIMIT) {
+      const newCount = count + 1;
+      try {
+        await c.env.KYB_CACHE.put(counterKey, String(newCount), {
+          expirationTtl: FREE_COUNTER_TTL_SECONDS,
+        });
+      } catch (error) {
+        console.error("Free sandbox quota update failed", error);
+        return c.json({ error: "Free sandbox quota is temporarily unavailable" }, 503);
+      }
+
+      c.header("X-Free-Remaining", String(FREE_DAILY_LIMIT - newCount));
+      c.header("X-Upgrade-Url", FREE_UPGRADE_URL);
+      return next();
+    }
+  }
+
   const bearer = authorization?.match(/^Bearer\s+(\S+)$/i)?.[1];
   if (bearer && c.env.API_KEYS) {
     try {
@@ -1221,11 +1399,38 @@ app.post("/v1/full-audit", async (c) => {
     byte.toString(16).padStart(2, "0"),
   ).join("");
 
+  if (!c.env.KYB_CACHE) {
+    return c.json({ error: "Audit receipt storage is not configured" }, 503);
+  }
+  const receipt: AuditReceipt = {
+    audit_id: auditId,
+    timestamp: checkedAt,
+    company_number: companyNumber.toUpperCase(),
+    company_status:
+      typeof company.body.status === "string" ? company.body.status : "unknown",
+    insolvency_flag:
+      typeof company.body.insolvency_history === "boolean"
+        ? company.body.insolvency_history
+        : null,
+    sanitized: true,
+  };
+  try {
+    await c.env.KYB_CACHE.put(
+      `audit:${auditId}`,
+      JSON.stringify(receipt),
+      { expirationTtl: AUDIT_RECEIPT_TTL_SECONDS },
+    );
+  } catch (error) {
+    console.error("Audit receipt storage failed", error);
+    return c.json({ error: "Could not store audit receipt" }, 503);
+  }
+
   return c.json({
     audit_id: auditId,
     company_verification: company.body,
     sanitization,
     checked_at: checkedAt,
+    receipt_url: `https://kybguard.uk/audit/${auditId}`,
   });
 });
 
@@ -1249,6 +1454,18 @@ async function readJson(c: Context<{ Bindings: Env }>) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isAuditReceipt(value: unknown, auditId: string): value is AuditReceipt {
+  return (
+    isRecord(value) &&
+    value.audit_id === auditId &&
+    typeof value.timestamp === "string" &&
+    typeof value.company_number === "string" &&
+    typeof value.company_status === "string" &&
+    (typeof value.insolvency_flag === "boolean" || value.insolvency_flag === null) &&
+    value.sanitized === true
+  );
 }
 
 function publicOrigin(c: Context<{ Bindings: Env }>): string {
