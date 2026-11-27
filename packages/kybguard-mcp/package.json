@@ -12,13 +12,13 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/madmad411-maker/agent-guard-api.git",
+    "url": "git+https://github.com/madmad411-maker/agent-guard-api.git",
     "directory": "packages/kybguard-mcp"
   },
   "type": "module",
   "main": "./dist/index.js",
   "bin": {
-    "kybguard-mcp": "./dist/index.js"
+    "kybguard-mcp": "dist/index.js"
   },
   "files": [
     "dist",
