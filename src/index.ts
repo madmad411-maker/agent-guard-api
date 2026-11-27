@@ -292,7 +292,7 @@ app.get("/checkout/:plan", async (c) => {
   const plan = checkoutPlans[planName];
   const form = new URLSearchParams({
     mode: plan.mode,
-    "payment_method_types[0]": "card",
+    "allowed_payment_method_types[0]": "card",
     "line_items[0][price_data][currency]": "gbp",
     "line_items[0][price_data][unit_amount]": String(plan.amount),
     "line_items[0][price_data][product_data][name]":
