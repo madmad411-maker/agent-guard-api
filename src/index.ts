@@ -91,6 +91,7 @@ const prices = {
 const checkoutPlans = {
   starter: { amount: 2900, credits: 5000, label: "Starter", mode: "subscription" },
   pro: { amount: 9900, credits: 25000, label: "Pro", mode: "subscription" },
+  agency: { amount: 19900, credits: 75000, label: "Agency", mode: "subscription" },
   payg: { amount: 1500, credits: 1000, label: "Pay-As-You-Go", mode: "payment" },
 } as const;
 
@@ -283,8 +284,13 @@ function checkoutStatusPage(message: string): string {
 
 app.get("/checkout/:plan", async (c) => {
   const planName = c.req.param("plan");
-  if (planName !== "starter" && planName !== "pro" && planName !== "payg") {
-    return c.json({ error: "Plan must be starter, pro, or payg" }, 400);
+  if (
+    planName !== "starter" &&
+    planName !== "pro" &&
+    planName !== "agency" &&
+    planName !== "payg"
+  ) {
+    return c.json({ error: "Plan must be starter, pro, agency, or payg" }, 400);
   }
 
   const stripeSecret = c.env.STRIPE_SECRET_KEY;
@@ -400,7 +406,10 @@ app.post("/webhooks/stripe", async (c) => {
       const planName = metadata.plan;
       const credits = metadata.credits;
       if (
-        (planName !== "starter" && planName !== "pro" && planName !== "payg") ||
+        (planName !== "starter" &&
+          planName !== "pro" &&
+          planName !== "agency" &&
+          planName !== "payg") ||
         credits !== String(checkoutPlans[planName].credits) ||
         stripeObject.mode !== checkoutPlans[planName].mode ||
         typeof stripeObject.id !== "string"
@@ -457,7 +466,11 @@ app.post("/webhooks/stripe", async (c) => {
           const currentMetadata = await c.env.API_KEYS.get(apiKey, "json");
           if (isRecord(currentMetadata)) {
             const planName = currentMetadata.plan;
-            if (planName === "starter" || planName === "pro") {
+            if (
+              planName === "starter" ||
+              planName === "pro" ||
+              planName === "agency"
+            ) {
               await c.env.API_KEYS.put(
                 apiKey,
                 JSON.stringify({
@@ -546,7 +559,7 @@ app.get("/", (c) => {
     .result-head strong{color:var(--cyan)}
     pre{display:block;width:100%;max-width:100%;overflow-x:auto;overscroll-behavior-x:contain;margin:10px 0 0;padding:16px;border:1px solid var(--line);border-radius:12px;background:#070b12;color:#d9e8f4;font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre}
     pre code{display:block;width:max-content;min-width:100%;max-width:100%;overflow-x:auto;white-space:pre}
-    .pricing-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
+    .pricing-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
     .price-card{display:flex;min-width:0;flex-direction:column;align-items:flex-start;padding:18px}
     .price-card h3{margin:5px 0;font-size:1.05rem}
     .price-card p{flex:1;margin:4px 0 14px;color:var(--muted);font-size:.9rem}
@@ -558,14 +571,14 @@ app.get("/", (c) => {
     .doclinks a{padding:7px 10px;border:1px solid var(--line);border-radius:9px;background:#ffffff06}
     footer{padding:24px 0 38px;border-top:1px solid var(--line);color:var(--muted);font-size:.9rem}
     [hidden]{display:none!important}
-    @media(max-width:1000px){.pricing-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+    @media(max-width:1000px){.pricing-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
     @media(max-width:767px){.wrap{width:calc(100% - 32px)}header{padding:14px 0}nav{align-items:flex-start;flex-direction:column;gap:10px}.navlinks{gap:12px}main{padding:38px 0 48px}.actions{align-items:stretch;flex-direction:column}.actions .button{width:100%}.demo-layout,.demo-form-grid,.pricing-grid{grid-template-columns:1fr}section{margin-top:40px}.demo-form,.demo-result{padding:16px}.price-card{padding:17px}.doclinks{flex-direction:column;align-items:stretch}.doclinks a{text-align:center}}
   </style>
 </head>
 <body>
   <header><nav class="wrap" aria-label="Main navigation">
     <a class="brand" href="${origin}/">AGENTGUARD</a>
-    <div class="navlinks"><a href="#live-demo">Live demo</a><a href="#pricing">Pricing</a><a href="#docs">Docs</a></div>
+    <div class="navlinks"><a href="#live-demo">Live demo</a><a href="#pricing">Pricing</a><a href="${origin}/bulk-check">Bulk screening</a><a href="${origin}/templates">n8n templates</a><a href="#docs">Docs</a></div>
   </nav></header>
   <main class="wrap">
     <div class="hero">
@@ -611,6 +624,7 @@ app.get("/", (c) => {
         <article class="glass price-card featured"><span class="microcopy">One-time pack</span><h3>Pay-As-You-Go</h3><div class="price">£15</div><p>1,000 API credits. Pay once, no monthly commitment.</p><a class="button primary" href="${origin}/checkout/payg">Get 1,000 credits</a></article>
         <article class="glass price-card"><span class="microcopy">Monthly plan</span><h3>Starter</h3><div class="price">£29<span class="microcopy"> / mo</span></div><p>5,000 requests per month for growing projects.</p><a class="button" href="${origin}/checkout/starter">Choose Starter</a></article>
         <article class="glass price-card"><span class="microcopy">Monthly plan</span><h3>Pro</h3><div class="price">£99<span class="microcopy"> / mo</span></div><p>25,000 requests per month for production teams.</p><a class="button" href="${origin}/checkout/pro">Choose Pro</a></article>
+        <article class="glass price-card"><span class="microcopy">Agency partner</span><h3>Agency</h3><div class="price">£199<span class="microcopy"> / mo</span></div><p>75,000 calls per month for client portfolios.</p><a class="button" href="${origin}/checkout/agency">Choose Agency</a></article>
         <article class="glass price-card"><span class="microcopy">Agent-native</span><h3>Autonomous x402</h3><div class="price">USDC</div><p>Per-call Base micropayments for autonomous agents.</p><a class="button" href="${origin}/llms.txt">Explore x402</a></article>
       </div>
     </section>
@@ -622,7 +636,7 @@ app.get("/", (c) => {
       <div class="doclinks"><a href="${origin}/llms.txt">llms.txt</a><a href="${origin}/.well-known/mcp.json">MCP manifest</a><a href="${origin}/openapi.json">OpenAPI reference</a><a href="${origin}/sitemap.xml">XML sitemap</a></div>
     </section>
   </main>
-  <footer><div class="wrap">AgentGuard UK · Secure input, verified business · Base USDC x402</div></footer>
+  <footer><div class="wrap">AgentGuard UK · Secure input, verified business · Base USDC x402 · <a href="${origin}/bulk-check">Bulk screening</a> · <a href="${origin}/templates">n8n templates</a></div></footer>
   <script>
     const sandboxForm = document.getElementById("sandbox-form");
     const demoAction = document.getElementById("demo-action");
@@ -820,7 +834,337 @@ dt{color:#a9b8cb}dd{margin:0 0 14px;overflow-wrap:anywhere}
 <dt>Insolvency check</dt><dd>${escapeHtml(insolvencyStatus)}</dd>
 <dt>Sanitized</dt><dd>Yes</dd>
 <dt>Audit ID</dt><dd>${escapeHtml(storedReceipt.audit_id)}</dd></dl>
+<footer style="margin-top:24px;padding-top:18px;border-top:1px solid #25344a;color:#a9b8cb">
+<p>Verified in real time against UK Companies House by KYBGuard — Run 5 free checks or get an API key at kybguard.uk</p>
+<p><a href="https://kybguard.uk/">Run free checks</a> · <a href="https://kybguard.uk/#pricing">Get an API key</a></p>
+</footer>
 </main></body></html>`);
+});
+
+function renderContentPage(
+  title: string,
+  description: string,
+  content: string,
+  origin: string,
+): string {
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="${escapeHtml(description)}"><meta name="theme-color" content="#0b0f19">
+<title>${escapeHtml(title)} | KYBGuard</title>
+<style>
+:root{color-scheme:dark;--bg:#0b0f19;--panel:#121d2e;--line:#25344a;--text:#edf4fb;--muted:#a9b8cb;--emerald:#51e3ad;--cyan:#67d8f4}
+*{box-sizing:border-box}html,body{margin:0;max-width:100%;overflow-x:hidden}body{background:var(--bg);color:var(--text);font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}
+a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}
+.wrap{width:min(1040px,calc(100% - 32px));margin:auto}header{padding:16px 0;border-bottom:1px solid var(--line)}
+nav,.navlinks,.actions,.links{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.brand{font-weight:850;letter-spacing:.1em;color:var(--text)}.navlinks{justify-content:flex-end}
+main{padding:clamp(28px,6vw,64px) 0}.eyebrow{color:var(--emerald);font-size:.8rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
+h1{font-size:clamp(2rem,6vw,3.8rem);line-height:1.08;letter-spacing:-.04em;margin:8px 0 14px}
+h2{font-size:clamp(1.3rem,3vw,1.8rem);margin:30px 0 8px}p,li{color:#c3d0dd}
+.panel{min-width:0;padding:clamp(18px,4vw,28px);border:1px solid var(--line);border-radius:16px;background:linear-gradient(145deg,#17263a,#101827);box-shadow:0 18px 48px #0003}
+.button,button{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:10px 15px;border:1px solid var(--line);border-radius:10px;background:#ffffff09;color:var(--text);font:inherit;font-weight:700;cursor:pointer}
+.button.primary,button.primary{background:var(--emerald);color:#082218;border-color:var(--emerald)}
+pre{max-width:100%;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:16px;border:1px solid var(--line);border-radius:11px;background:#070b12;color:#d9e8f4}
+.muted{color:var(--muted)}footer{padding:22px 0 32px;border-top:1px solid var(--line);color:var(--muted)}
+@media(max-width:680px){nav{align-items:flex-start;flex-direction:column}.navlinks{justify-content:flex-start;gap:10px}.actions{align-items:stretch;flex-direction:column}.actions .button{width:100%}}
+</style></head>
+<body><header><nav class="wrap"><a class="brand" href="${origin}/">KYBGUARD</a>
+<div class="navlinks"><a href="${origin}/bulk-check">Bulk screening</a><a href="${origin}/templates">n8n templates</a><a href="${origin}/#pricing">Pricing</a><a href="${origin}/llms.txt">API docs</a></div>
+</nav></header><main class="wrap"><article class="panel"><p class="eyebrow">KYBGuard · UK compliance tools</p>
+<h1>${escapeHtml(title)}</h1><p class="muted">${escapeHtml(description)}</p>${content}
+<div class="actions"><a class="button primary" href="${origin}/checkout/starter">Get an API key</a><a class="button" href="${origin}/bulk-check">Screen companies</a><a class="button" href="${origin}/templates">Browse templates</a></div>
+</article></main><footer><div class="wrap">KYBGuard · <a href="${origin}/bulk-check">Bulk screening</a> · <a href="${origin}/templates">n8n templates</a> · <a href="${origin}/">Home</a></div></footer></body></html>`;
+}
+
+app.get("/bulk-check", (c) =>
+  c.html(
+    renderContentPage(
+      "Bulk CSV UK Company Screener",
+      "Screen up to 100 UK companies sequentially against Companies House and export enriched results.",
+      `<p>Paste one company number per line or upload a CSV. Add a KYBGuard API key for larger batches; without one, the five free daily checks still apply.</p>
+<div class="panel">
+<label for="company-input">Company numbers or CSV content</label>
+<textarea id="company-input" rows="9" placeholder="00445790&#10;00000006" spellcheck="false"></textarea>
+<label for="csv-file">Or upload a .csv file</label><input id="csv-file" type="file" accept=".csv,text/csv">
+<label for="api-key">API key (ag_... or kyb_live_...)</label>
+<input id="api-key" type="password" autocomplete="off" placeholder="Paste your API key">
+<div class="actions" style="margin-top:16px"><button class="primary" id="screen-button" type="submit" form="screen-form">Screen Companies</button><a class="button" href="${escapeHtml(publicOrigin(c))}/checkout/payg">Buy 1,000 Credits for £15</a></div>
+<p class="muted">Your API key is used only in requests from this browser and is not saved by this page.</p>
+</div>
+<form id="screen-form"><progress id="screen-progress" value="0" max="1" style="width:100%;height:18px;margin-top:18px"></progress>
+<p id="screen-status" role="status" aria-live="polite">Ready to screen up to 100 companies.</p></form>
+<div class="actions"><h2 style="margin:0">Enriched results</h2><button id="download-csv" type="button" disabled>Download Enriched CSV</button></div>
+<pre><code id="screen-results">Results will appear here as requests complete.</code></pre>
+<style>
+.panel label{display:block;margin:12px 0 6px;font-weight:700;color:#d5e0e9}
+.panel textarea,.panel input{display:block;width:100%;max-width:100%;padding:12px;border:1px solid #25344a;border-radius:9px;background:#080e18;color:#edf4fb;font:inherit}
+.panel textarea{resize:vertical;min-height:150px}.panel input[type=file]{padding:9px}
+#screen-form{margin:0}#screen-status{min-height:1.5em}
+.actions h2{flex:1}
+</style>
+<script>
+const screenForm=document.getElementById("screen-form");
+const input=document.getElementById("company-input");
+const fileInput=document.getElementById("csv-file");
+const apiKeyInput=document.getElementById("api-key");
+const screenButton=document.getElementById("screen-button");
+const progress=document.getElementById("screen-progress");
+const statusText=document.getElementById("screen-status");
+const output=document.getElementById("screen-results");
+const downloadButton=document.getElementById("download-csv");
+let results=[];
+function parseCsv(text){
+  const rows=[];let row=[];let value="";let quoted=false;
+  for(let i=0;i<text.length;i++){
+    const character=text[i];
+    if(character==='"'){
+      if(quoted&&text[i+1]==='"'){value+='"';i++}else{quoted=!quoted}
+    }else if(character===","&&!quoted){row.push(value);value=""}
+    else if((character==="\\n"||character==="\\r")&&!quoted){
+      if(character==="\\r"&&text[i+1]==="\\n")i++;
+      row.push(value);if(row.some((cell)=>cell.trim()))rows.push(row);row=[];value="";
+    }else{value+=character}
+  }
+  if(quoted)throw new Error("The CSV has an unclosed quoted field.");
+  if(value.length||row.length){row.push(value);if(row.some((cell)=>cell.trim()))rows.push(row)}
+  const headers=(rows[0]||[]).map((cell)=>cell.replace(/^\\uFEFF/,"").trim().toLowerCase().replace(/[\\s-]+/g,"_"));
+  const headerIndex=headers.findIndex((header)=>["company_number","companynumber","registration_number","number"].includes(header));
+  const column=headerIndex<0?0:headerIndex;
+  return rows.slice(headerIndex<0?0:1).map((cells)=>String(cells[column]||"").trim()).filter(Boolean);
+}
+fileInput.addEventListener("change",async()=>{
+  const file=fileInput.files&&fileInput.files[0];if(!file)return;
+  try{input.value=await file.text();statusText.textContent="Loaded "+file.name+"; review the rows and screen when ready."}
+  catch{statusText.textContent="Could not read the selected CSV file."}
+});
+screenForm.addEventListener("submit",async(event)=>{
+  event.preventDefault();let companyNumbers;
+  try{companyNumbers=parseCsv(input.value)}
+  catch(error){statusText.textContent=error instanceof Error?error.message:"Could not parse the input.";return}
+  if(!companyNumbers.length){statusText.textContent="Enter at least one company number.";return}
+  if(companyNumbers.length>100){statusText.textContent="Limit is 100 companies per batch; found "+companyNumbers.length+".";return}
+  results=[];output.textContent="";downloadButton.disabled=true;screenButton.disabled=true;
+  progress.max=companyNumbers.length;progress.value=0;
+  const key=apiKeyInput.value.trim();let stoppedForPayment=false;
+  for(let index=0;index<companyNumbers.length;index++){
+    const companyNumber=companyNumbers[index];
+    statusText.textContent="Screening "+(index+1)+" of "+companyNumbers.length+": "+companyNumber;
+    try{
+      const headers={"Content-Type":"application/json"};
+      if(key)headers.Authorization="Bearer "+key;
+      const response=await fetch("/v1/verify-uk-company",{method:"POST",headers,body:JSON.stringify({company_number:companyNumber})});
+      const responseText=await response.text();let data;
+      try{data=JSON.parse(responseText)}catch{data={error:responseText||"Invalid JSON response"}}
+      results.push({
+        company_number:companyNumber,company_name:data.company_name||"",status:data.status||"",
+        insolvency_history:data.insolvency_history??"",verified:data.verified===true,
+        http_status:response.status,error:response.ok?"":data.error||("HTTP "+response.status)
+      });
+      if(response.status===402){stoppedForPayment=true;progress.value=index+1;break}
+    }catch(error){
+      results.push({company_number:companyNumber,company_name:"",status:"",insolvency_history:"",verified:false,http_status:0,error:error instanceof Error?error.message:"Network request failed"});
+    }
+    progress.value=index+1;output.textContent=JSON.stringify(results,null,2);
+  }
+  output.textContent=JSON.stringify(results,null,2);downloadButton.disabled=results.length===0;
+  screenButton.disabled=false;
+  statusText.textContent=stoppedForPayment
+    ?"Stopped at payment required. Add an API key or buy credits to continue; completed results are available to download."
+    :"Finished "+results.length+" of "+companyNumbers.length+" company checks.";
+});
+function csvCell(value){
+  let text=String(value??"");
+  if(/^\\s*[=+\\-@]/.test(text))text="'"+text;
+  return '"'+text.replace(/"/g,'""')+'"';
+}
+downloadButton.addEventListener("click",()=>{
+  if(!results.length)return;
+  const columns=["company_number","company_name","status","insolvency_history","verified","http_status","error"];
+  const csv=[columns.map(csvCell).join(","),...results.map((result)=>columns.map((column)=>csvCell(result[column])).join(","))].join("\\r\\n");
+  const url=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));
+  const link=document.createElement("a");link.href=url;link.download="kybguard-company-screening.csv";document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+});
+</script>`,
+      escapeHtml(publicOrigin(c)),
+    ),
+  ),
+);
+
+const n8nUkKybWorkflow = {
+  name: "KYBGuard UK Company Audit",
+  nodes: [
+    {
+      parameters: {
+        httpMethod: "POST",
+        path: "kybguard-uk-kyb",
+        responseMode: "onReceived",
+        options: {},
+      },
+      id: "c4f4ad8e-70b4-4ba2-b9d3-77ca6a82a113",
+      name: "Receive KYB request",
+      type: "n8n-nodes-base.webhook",
+      typeVersion: 2.1,
+      position: [240, 300],
+      webhookId: "kybguard-uk-kyb",
+    },
+    {
+      parameters: {
+        method: "POST",
+        url: "https://api.kybguard.uk/v1/full-audit",
+        sendHeaders: true,
+        headerParameters: {
+          parameters: [
+            {
+              name: "Authorization",
+              value: "={{ 'Bearer ' + $env.KYBGUARD_API_KEY }}",
+            },
+            { name: "Content-Type", value: "application/json" },
+          ],
+        },
+        sendBody: true,
+        contentType: "json",
+        specifyBody: "json",
+        jsonBody:
+          "={{ { company_number: $json.body.company_number, payload_text: $json.body.payload_text } }}",
+        options: {},
+      },
+      id: "f3a198e7-2351-48fb-8d75-b093b86a8b7b",
+      name: "Run KYBGuard full audit",
+      type: "n8n-nodes-base.httpRequest",
+      typeVersion: 4.2,
+      position: [500, 300],
+    },
+    {
+      parameters: {
+        conditions: {
+          options: {
+            caseSensitive: false,
+            leftValue: "",
+            typeValidation: "strict",
+            version: 2,
+          },
+          conditions: [
+            {
+              id: "check-company-status",
+              leftValue: "={{ $json.company_verification.status }}",
+              rightValue: "active",
+              operator: { type: "string", operation: "notEquals" },
+            },
+            {
+              id: "check-insolvency",
+              leftValue: "={{ $json.company_verification.insolvency_history }}",
+              rightValue: true,
+              operator: { type: "boolean", operation: "equals" },
+            },
+          ],
+          combinator: "or",
+        },
+        options: {},
+      },
+      id: "3a36a762-1ee3-4f69-87f2-63e6fbba9dc1",
+      name: "Flag inactive or insolvent",
+      type: "n8n-nodes-base.if",
+      typeVersion: 2.2,
+      position: [760, 300],
+    },
+  ],
+  connections: {
+    "Receive KYB request": {
+      main: [[{ node: "Run KYBGuard full audit", type: "main", index: 0 }]],
+    },
+    "Run KYBGuard full audit": {
+      main: [[{ node: "Flag inactive or insolvent", type: "main", index: 0 }]],
+    },
+  },
+  active: false,
+  settings: { executionOrder: "v1" },
+  versionId: "f69e1f29-72bf-42e5-bb8b-b1b3cfa9d9f9",
+  tags: [],
+};
+
+app.get("/templates/n8n-uk-kyb.json", (c) =>
+  c.body(JSON.stringify(n8nUkKybWorkflow, null, 2), 200, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Disposition": 'attachment; filename="kybguard-n8n-uk-kyb.json"',
+  }),
+);
+
+app.get("/templates", (c) =>
+  c.html(
+    renderContentPage(
+      "No-code UK KYB workflow templates",
+      "Connect n8n to UK company verification, audit receipts, and real-time compliance checks.",
+      `<p>Import the ready-to-use n8n workflow, add your KYBGuard key as an environment variable, and receive a full audit for each webhook request.</p>
+<h2>1. Download and import</h2><p><a class="button primary" href="/templates/n8n-uk-kyb.json">Download n8n UK KYB workflow JSON</a></p>
+<p>In n8n, open <strong>Workflows → Import from File</strong> and select the downloaded JSON. The workflow adds a Webhook trigger, a KYBGuard full-audit request, and an IF node that flags inactive or insolvent companies.</p>
+<h2>2. Add your API key</h2><p>Set <code>KYBGUARD_API_KEY</code> in the n8n runtime environment, then restart n8n. The HTTP Request node sends <code>Authorization: Bearer {{$env.KYBGUARD_API_KEY}}</code>. Keep this secret out of workflow exports and source control.</p>
+<h2>3. Send a test request</h2><pre><code>curl -X POST https://YOUR_N8N_HOST/webhook/kybguard-uk-kyb \\
+  -H 'Content-Type: application/json' \\
+  --data '{"company_number":"00445790","payload_text":"Supplier onboarding review"}'</code></pre>
+<p>The full audit response includes company verification, sanitized text, and a shareable audit receipt. Configure your downstream true/false branches to notify your compliance team or continue onboarding.</p>
+<p class="muted">The workflow is inactive after import. Review the nodes, configure environment access in n8n, and activate it when ready.</p>`,
+      escapeHtml(publicOrigin(c)),
+    ),
+  ),
+);
+
+const ukGuides: Record<string, { title: string; description: string; content: string }> = {
+  "companies-house-mcp": {
+    title: "How to Connect UK Companies House to Claude & Cursor via MCP",
+    description:
+      "Connect Claude or Cursor to KYBGuard's MCP tools for UK company verification and safer AI inputs.",
+    content: `<p>KYBGuard exposes company verification and input sanitization as MCP tools. The local stdio bridge lets MCP-compatible clients call the API while keeping your API key in the client environment.</p>
+<h2>Configure an MCP client</h2><p>Add the bridge to your Claude Desktop or Cursor MCP configuration and replace the example path with the location of your checkout.</p>
+<pre><code>{
+  "command": "node",
+  "args": ["/path/to/agent-guard-api/mcp-server.mjs"],
+  "env": {
+    "AGENTGUARD_API_URL": "https://api.kybguard.uk",
+    "AGENTGUARD_API_KEY": "YOUR_KYBGUARD_API_KEY"
+  }
+}</code></pre>
+<h2>Verify a company</h2><p>Ask your client to verify a UK company by number. For beneficial ownership checks, use the deep KYB tool, which reports active directors and PSC counts alongside company status and risk flags.</p>
+<p>Requests without a key can use the limited daily free sandbox; for repeatable workflows, use a paid API key or Base USDC x402 payments.</p>`,
+  },
+  "uk-kyb-api": {
+    title: "Automated UK KYB & Beneficial Ownership (PSC) Verification API",
+    description:
+      "Automate UK company status, insolvency, director, and PSC checks with KYBGuard's API.",
+    content: `<p>Automated Know Your Business screening can combine a Companies House profile check with officer and Persons with Significant Control (PSC) records. KYBGuard exposes a standard verification endpoint and a deeper KYB risk endpoint for onboarding flows.</p>
+<h2>Verify a UK company</h2><pre><code>curl -X POST https://api.kybguard.uk/v1/verify-uk-company \\
+  -H 'Authorization: Bearer YOUR_KYBGUARD_API_KEY' \\
+  -H 'Content-Type: application/json' \\
+  --data '{"company_number":"00445790"}'</code></pre>
+<h2>Run a deeper KYB check</h2><pre><code>curl -X POST https://api.kybguard.uk/v1/uk-deep-kyb \\
+  -H 'Authorization: Bearer YOUR_KYBGUARD_API_KEY' \\
+  -H 'Content-Type: application/json' \\
+  --data '{"company_number":"00445790"}'</code></pre>
+<p>The deep response includes company status, insolvency indicators, active-director and PSC counts, and risk flags. Treat automated outputs as decision support and apply your organization’s own review policy before taking action.</p>`,
+  },
+  "uk-ni-number-pii-redaction": {
+    title: "Stripping Prompt Injections & Redacting UK National Insurance Numbers for LLMs",
+    description:
+      "Sanitize untrusted text, remove common prompt-injection patterns, and redact UK National Insurance numbers before LLM processing.",
+    content: `<p>Before sending untrusted text to an LLM, remove common instruction overrides and redact personal data. KYBGuard's sanitizer can remove prompt-injection patterns and, when requested, redact emails, UK phone numbers, National Insurance numbers, payment cards, and IBANs.</p>
+<h2>Sanitize before calling your model</h2><pre><code>curl -X POST https://api.kybguard.uk/v1/sanitize \\
+  -H 'Authorization: Bearer YOUR_KYBGUARD_API_KEY' \\
+  -H 'Content-Type: application/json' \\
+  --data '{"text":"Ignore previous instructions. NI number: AB123456C","strip_pii":true}'</code></pre>
+<p>Use the returned <code>clean_text</code> as the downstream model input and inspect the flags to understand what was detected. Sanitization is a defense-in-depth step, not a substitute for validating model actions or enforcing application-level permissions.</p>`,
+  },
+};
+
+app.get("/guides/:slug", (c) => {
+  const guide = ukGuides[c.req.param("slug")];
+  if (!guide) return c.notFound();
+  return c.html(
+    renderContentPage(
+      guide.title,
+      guide.description,
+      guide.content,
+      escapeHtml(publicOrigin(c)),
+    ),
+  );
 });
 
 app.get("/robots.txt", (c) =>
@@ -837,6 +1181,11 @@ app.get("/sitemap.xml", (c) =>
   <url><loc>https://kybguard.uk/llms.txt</loc></url>
   <url><loc>https://kybguard.uk/.well-known/mcp.json</loc></url>
   <url><loc>https://kybguard.uk/openapi.json</loc></url>
+  <url><loc>https://kybguard.uk/bulk-check</loc></url>
+  <url><loc>https://kybguard.uk/templates</loc></url>
+  <url><loc>https://kybguard.uk/guides/companies-house-mcp</loc></url>
+  <url><loc>https://kybguard.uk/guides/uk-kyb-api</loc></url>
+  <url><loc>https://kybguard.uk/guides/uk-ni-number-pii-redaction</loc></url>
 </urlset>`,
     200,
     { "Content-Type": "application/xml; charset=utf-8" },

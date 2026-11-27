@@ -38,8 +38,13 @@ assert.match(landingHtml, /£29/);
 assert.match(landingHtml, /5,000 requests per month/);
 assert.match(landingHtml, /£99/);
 assert.match(landingHtml, /25,000 requests per month/);
+assert.match(landingHtml, /Agency/);
+assert.match(landingHtml, /£199/);
+assert.match(landingHtml, /75,000 calls per month/);
 assert.match(landingHtml, /Autonomous x402/);
 assert.match(landingHtml, /USDC/);
+assert.match(landingHtml, /\/bulk-check/);
+assert.match(landingHtml, /\/templates/);
 assert.match(landingHtml, /\/llms\.txt/);
 assert.match(landingHtml, /\/openapi\.json/);
 assert.match(landingHtml, /\/\.well-known\/mcp\.json/);
@@ -123,6 +128,53 @@ assert.match(sitemapXml, /https:\/\/kybguard\.uk\/<\/loc>/);
 assert.match(sitemapXml, /https:\/\/kybguard\.uk\/llms\.txt/);
 assert.match(sitemapXml, /https:\/\/kybguard\.uk\/\.well-known\/mcp\.json/);
 assert.match(sitemapXml, /https:\/\/kybguard\.uk\/openapi\.json/);
+for (const path of [
+  "/bulk-check",
+  "/templates",
+  "/guides/companies-house-mcp",
+  "/guides/uk-kyb-api",
+  "/guides/uk-ni-number-pii-redaction",
+]) {
+  assert.match(sitemapXml, new RegExp(`https://kybguard\\.uk${path.replaceAll("/", "\\/")}`));
+}
+
+const bulkCheck = await fetch(`${baseUrl}/bulk-check`);
+assert.equal(bulkCheck.status, 200);
+assert.match(bulkCheck.headers.get("content-type") ?? "", /text\/html/i);
+const bulkCheckHtml = await bulkCheck.text();
+assert.match(bulkCheckHtml, /Bulk CSV UK Company Screener/);
+assert.match(bulkCheckHtml, /Screen Companies/);
+assert.match(bulkCheckHtml, /Buy 1,000 Credits for £15/);
+assert.match(bulkCheckHtml, /Download Enriched CSV/);
+assert.match(bulkCheckHtml, /await fetch\("\/v1\/verify-uk-company"/);
+assert.match(bulkCheckHtml, /companyNumbers\.length>100/);
+
+const templatesPage = await fetch(`${baseUrl}/templates`);
+assert.equal(templatesPage.status, 200);
+assert.match(await templatesPage.text(), /Import from File/);
+const n8nTemplateResponse = await fetch(`${baseUrl}/templates/n8n-uk-kyb.json`);
+assert.equal(n8nTemplateResponse.status, 200);
+assert.match(n8nTemplateResponse.headers.get("content-type") ?? "", /application\/json/i);
+assert.match(n8nTemplateResponse.headers.get("content-disposition") ?? "", /attachment/);
+const n8nTemplate = await n8nTemplateResponse.json();
+assert.equal(n8nTemplate.name, "KYBGuard UK Company Audit");
+assert.equal(n8nTemplate.nodes.find((node) => node.type === "n8n-nodes-base.webhook").name, "Receive KYB request");
+const n8nHttpNode = n8nTemplate.nodes.find((node) => node.type === "n8n-nodes-base.httpRequest");
+assert.equal(n8nHttpNode.parameters.url, "https://api.kybguard.uk/v1/full-audit");
+assert.match(n8nHttpNode.parameters.headerParameters.parameters[0].value, /KYBGUARD_API_KEY/);
+const n8nIfNode = n8nTemplate.nodes.find((node) => node.type === "n8n-nodes-base.if");
+assert.equal(n8nIfNode.parameters.conditions.combinator, "or");
+
+for (const [path, title] of [
+  ["/guides/companies-house-mcp", /How to Connect UK Companies House to Claude &amp; Cursor via MCP/],
+  ["/guides/uk-kyb-api", /Automated UK KYB &amp; Beneficial Ownership \(PSC\) Verification API/],
+  ["/guides/uk-ni-number-pii-redaction", /Stripping Prompt Injections &amp; Redacting UK National Insurance Numbers for LLMs/],
+]) {
+  const guide = await fetch(`${baseUrl}${path}`);
+  assert.equal(guide.status, 200, `${path} should return 200`);
+  assert.match(guide.headers.get("content-type") ?? "", /text\/html/i);
+  assert.match(await guide.text(), title);
+}
 
 const mcpResponse = await fetch(`${baseUrl}/.well-known/mcp.json`);
 assert.equal(mcpResponse.status, 200);
